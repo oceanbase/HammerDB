@@ -95,10 +95,15 @@ foreach { key } [ dict keys $dbdict ] {
         set dbconfdict [ ::XML::To_Dict $dirname/$key.xml ]
         Dict2SQLite $key $dbconfdict
     }
-    # Upgrade the initial OceanBase configuration without changing its settings.
-    if {$key eq "oceanbase" && ![dict exists $dbconfdict connection ob_compatibility_mode]} {
-        dict set dbconfdict connection ob_compatibility_mode mysql
-        Dict2SQLite $key $dbconfdict
+    # Apply only OceanBase defaults, preserving existing values and other databases.
+    if {$key eq "oceanbase"} {
+        package require oceanbaseconfig
+        set normalized [oceanbaseconfig::normalize $dbconfdict]
+        if {$normalized ne $dbconfdict} {
+            set dbconfdict $normalized
+            Dict2SQLite $key $dbconfdict
+        }
+        unset normalized
     }
     set $dictname $dbconfdict
     set prefix [ dict get $dbdict $key prefix ]

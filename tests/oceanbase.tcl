@@ -3,7 +3,9 @@ package require tcltest 2
 namespace import ::tcltest::*
 set root [file dirname [file dirname [file normalize [info script]]]]
 source [file join $root modules mysqlcommon-1.0.tm]
+source [file join $root modules oceanbaseconfig-1.0.tm]
 source [file join $root src oceanbase obopt.tcl]
+source [file join $root src generic gengen.tcl]
 
 test counter-mysql-order {MySQL counters need not be ordered or case-sensitive} -body {
     mysqlcommon::configure MySQL 0
@@ -57,8 +59,8 @@ test login-empty {Tenant selection is explicit} -body {
 } -returnCodes error -match glob -result {*required*}
 
 source [file join $root modules xml-1.1.tm]
-test config-empty {Empty XML fields must survive configuration loading} -body {
-    set config [::XML::To_Dict [file join $root config oceanbase.xml]]
+test config-empty {OceanBase supplies defaults without changing XML parsing} -body {
+    set config [oceanbaseconfig::normalize [::XML::To_Dict [file join $root config oceanbase.xml]]]
     list [dict get $config connection ob_cluster] [dict get $config tpcc ob_pass] [dict get $config tpch ob_tpch_pass]
 } -result {{} {} {}}
 if {[llength [info commands find_config_dir]] == 0} {
@@ -105,6 +107,44 @@ test mode-extension {A second backend receives workload, counter and option oper
     set ::oceanbase::backends $saved_backends
     namespace delete ::ob_test_backend
 } -result {{generated tpcc build} {counted TPC-H 1 master} {options tpch drive} validated}
+
+test xml-unchanged {The shared parser still omits self-closing elements} -body {
+    set raw [::XML::To_Dict [file join $root config oceanbase.xml]]
+    list [dict exists $raw connection ob_cluster] [dict exists $raw tpcc ob_pass]
+} -result {0 0}
+test defaults-preserved {Normalization preserves configured values and explicit empty values} -body {
+    set input {connection {ob_cluster existing ob_compatibility_mode mysql} tpcc {ob_pass example} tpch {ob_tpch_pass {}}}
+    expr {[oceanbaseconfig::normalize $input] eq $input}
+} -result 1
+test defaults-oracle {MySQL password defaults are not injected into another mode} -body {
+    dict exists [oceanbaseconfig::normalize {connection {ob_compatibility_mode oracle}}] tpcc
+} -result 0
+test data-native {Existing native data formats are unchanged} -body {
+    set result {}
+    foreach db {Oracle MSSQLServer Db2 MySQL MariaDB PostgreSQL} {lappend result [data_generation_format $db tpcc]}
+    set result
+} -result {oracle mssql db2 mysql maria pg}
+test data-mode-dispatch {Both generators obtain their format from the selected backend} -setup {
+    set saved_ob $::configoceanbase
+    set saved_backends $::oceanbase::backends
+    set had_dbdict [info exists ::dbdict]
+    if {$had_dbdict} {set saved_dbdict $::dbdict}
+    set ::dbdict {oceanbase {name OceanBase prefix ob}}
+    namespace eval ::ob_format_test {
+        proc data_format {workload} {lappend ::format_calls $workload; return oracle}
+    }
+    dict set ::oceanbase::backends oracle ::ob_format_test
+    dict set ::configoceanbase connection ob_compatibility_mode oracle
+    set ::format_calls {}
+} -body {
+    list [data_generation_format OceanBase tpcc] [data_generation_format OceanBase tpch] $::format_calls
+} -cleanup {
+    set ::configoceanbase $saved_ob
+    set ::oceanbase::backends $saved_backends
+    if {$had_dbdict} {set ::dbdict $saved_dbdict} else {unset ::dbdict}
+    namespace delete ::ob_format_test
+    unset ::format_calls
+} -result {oracle oracle {tpcc tpch}}
 
 set failed $::tcltest::numTests(Failed)
 cleanupTests

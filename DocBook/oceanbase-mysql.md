@@ -99,7 +99,7 @@ and OBProxy 4.4.1.0: two-warehouse C build/check, direct and proxy procedure cal
 prepared calls, non-procedure calls, timed results, and post-run consistency;
 H SF1 build/check, all 22 queries, RF1/queries/RF2 through the proxy, and final
 consistency. Counter polling, rejected credentials, existing configuration
-migration, and 24 helper/generated-driver assertions passed. The original
+migration, and 29 helper/generated-driver assertions passed. The original
 MySQL installation and earlier test databases were retained.
 
 This is compatibility validation, not a performance result or certification.
@@ -128,6 +128,7 @@ To implement Oracle tenants, add and explicitly register a separate backend
 - `generate workload action`: C build/test/timed/check/delete; H build/test/check/delete.
 - `counter benchmark interval masterthread`: the Oracle connection/library and OB statistics implementation.
 - `options group option` and `validate configuration`: Oracle-specific configuration, validation and UI.
+- `data_format workload`: the format used by offline C/H data-file generation (`mysql` for the MySQL backend).
 
 The Oracle backend can reuse the existing Oracle generators with isolated
 configuration, as the MySQL backend does for MySQL. It must own Oracle login
@@ -143,3 +144,20 @@ non-procedure C calls, all 22 H queries, C/H counter polling, migration of a
 configuration missing the mode field, and rejection of `oracle` through the
 actual CLI. A test-only second backend verified that generation, counters,
 options and validation dispatch independently of the MySQL implementation.
+
+Empty optional values are supplied by `oceanbaseconfig::normalize` after loading
+OceanBase XML or saved SQLite configuration. Existing values, including explicit
+empty strings, are preserved. The shared XML parser is unchanged. MySQL password
+defaults are only applied to the MySQL tenant mode.
+
+Offline data generation resolves native database formats in one shared helper.
+Additional categories supply a `<prefix>_data_generation_format` callback;
+OceanBase delegates this to its selected backend's `data_format` operation.
+Unsupported tenant modes fail before creating data-generation virtual users or
+files. Adding an Oracle backend does not require changing the C/H data generators.
+
+Offline generation was also validated on AWS Linux: one C warehouse produced all
+nine files, and H SF1 produced all eight files with the expected fixed table
+cardinalities and approximately six million line items. Customer timestamps in
+the C files use the MySQL date-time format. Fresh and persisted OceanBase
+configuration defaults and rejection of Oracle data generation passed as well.

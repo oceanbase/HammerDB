@@ -11,6 +11,7 @@ namespace eval oceanbase::mysql {
     }
 
     proc config {config} {
+        set config [::oceanbaseconfig::normalize $config]
         # Start with MySQL defaults, not the user's current MySQL configuration.
         set mapped [::XML::To_Dict [file join [find_config_dir] mysql.xml]]
         dict for {group values} $config {
@@ -137,6 +138,10 @@ namespace eval oceanbase::mysql {
         ttk::button .oboptions.buttons.cancel -text Cancel -command {destroy .oboptions}
         pack .oboptions.buttons.cancel .oboptions.buttons.ok -side right -padx 5 -pady 5
         pack .oboptions.buttons -fill x
+    }
+    proc data_format {workload} {
+        if {$workload ni {tpcc tpch}} {error "Unsupported OceanBase MySQL data workload: $workload"}
+        return mysql
     }
     proc validate {configuration} {config $configuration}
     proc counter {bm interval masterthread} {
