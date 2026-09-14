@@ -988,6 +988,7 @@ proc chk_socket { host socket } {
 }
 
 proc do_tpcc { host port socket ssl_options count_ware user password db mysql_storage_engine partition history_pk num_vu } {
+    try {
     global mysqlstatus
     set MAXITEMS 100000
     set CUST_PER_DIST 3000
@@ -1105,9 +1106,14 @@ proc do_tpcc { host port socket ssl_options count_ware user password db mysql_st
         mysqlclose $mysql_handler
         return
     }
+    } on error {message options} {
+        # Notify the monitor and workers without losing the original error.
+        tsv::set application abort 1
+        return -options $options $message
+    }
 }
 }
-        .ed_mainFrame.mainwin.textFrame.left.text fastinsert end "mysqlcommon::run do_tpcc $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_count_ware $mysql_user [ quotemeta $mysql_pass ] $mysql_dbase $mysql_storage_engine $mysql_partition $mysql_history_pk $mysql_num_vu"
+        .ed_mainFrame.mainwin.textFrame.left.text fastinsert end "do_tpcc $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_count_ware $mysql_user [ quotemeta $mysql_pass ] $mysql_dbase $mysql_storage_engine $mysql_partition $mysql_history_pk $mysql_num_vu"
     } else { return }
 }
 

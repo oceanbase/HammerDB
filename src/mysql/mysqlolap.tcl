@@ -765,6 +765,7 @@ proc mk_order { mysql_handler start_rows end_rows upd_num scale_factor oceanbase
 }
 
 proc do_tpch { host port socket ssl_options scale_fact user password db mysql_tpch_storage_engine num_vu oceanbase_db ob_partition_num ob_tenant_name} {
+    try {
     global mysqlstatus
     global dist_names dist_weights weights dists weights
     ###############################################
@@ -932,9 +933,14 @@ proc do_tpch { host port socket ssl_options scale_fact user password db mysql_tp
         puts "[ string toupper $db ] SCHEMA COMPLETE"
         return
     }
+    } on error {message options} {
+        # Notify the monitor and workers without losing the original error.
+        tsv::set application abort 1
+        return -options $options $message
+    }
 }
 }
-        .ed_mainFrame.mainwin.textFrame.left.text fastinsert end "mysqlcommon::run do_tpch $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_scale_fact $mysql_tpch_user [ quotemeta $mysql_tpch_pass ] $mysql_tpch_dbase $mysql_tpch_storage_engine $mysql_num_tpch_threads $mysql_tpch_obcompat $mysql_ob_partition_num $mysql_ob_tenant_name"
+        .ed_mainFrame.mainwin.textFrame.left.text fastinsert end "do_tpch $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_scale_fact $mysql_tpch_user [ quotemeta $mysql_tpch_pass ] $mysql_tpch_dbase $mysql_tpch_storage_engine $mysql_num_tpch_threads $mysql_tpch_obcompat $mysql_ob_partition_num $mysql_ob_tenant_name"
     } else { return }
 }
 

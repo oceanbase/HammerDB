@@ -28,16 +28,6 @@ namespace eval mysqlcommon {
         }
     }
 
-    proc run {args} {
-        # Wake a schema monitor if a loader fails before reporting "done".
-        try {
-            return [uplevel 1 $args]
-        } on error {message options} {
-            tsv::set application abort 1
-            return -options $options $message
-        }
-    }
-
     proc counter_sql {} {
         variable database
         if {$database eq "OceanBase"} {
