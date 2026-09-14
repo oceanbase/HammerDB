@@ -45,7 +45,7 @@ if { $genericdictdb eq "" } {
         if { [catch {hdb close} message]} {
                 puts "Failed to close SQLite: $message"
         }
-        foreach { dbname } { generic database db2 mariadb mssqlserver mysql oracle postgresql } {
+        foreach { dbname } { generic database db2 mariadb mssqlserver mysql oceanbase oracle postgresql } {
             set dbfile [ CheckSQLiteDB $dbname ]
             #Remove SQLite file
 	    if { [catch {file delete $dbfile} message]} {
@@ -73,12 +73,27 @@ if { $dbdict eq "" } {
     Dict2SQLite "database" $dbdict
 }
 
+# Merge newly registered databases without replacing saved database settings.
+set database_defaults [regsub -all {(TP)(RO)(C-[CH])} [::XML::To_Dict $dirname/database.xml] {\1\3}]
+dict for {database attributes} $database_defaults {
+    if {![dict exists $dbdict $database]} {
+        dict set dbdict $database $attributes
+        Dict2SQLite "database" $dbdict
+    }
+}
+unset database_defaults
+
 #Load database details in dict named configdbname
 foreach { key } [ dict keys $dbdict ] {
     set dictname config$key
     set dbconfdict [ SQLite2Dict $key ]
     if { $dbconfdict eq "" } {
         set dbconfdict [ ::XML::To_Dict $dirname/$key.xml ]
+        Dict2SQLite $key $dbconfdict
+    }
+    # Upgrade the initial OceanBase configuration without changing its settings.
+    if {$key eq "oceanbase" && ![dict exists $dbconfdict connection ob_compatibility_mode]} {
+        dict set dbconfdict connection ob_compatibility_mode mysql
         Dict2SQLite $key $dbconfdict
     }
     set $dictname $dbconfdict

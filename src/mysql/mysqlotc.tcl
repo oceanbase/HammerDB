@@ -1,4 +1,4 @@
-proc tcount_mysql {bm interval masterthread} {
+proc tcount_mysql {bm interval masterthread {database MySQL} {query_timeout 0}} {
     global tc_threadID mysql_ssl_options
     upvar #0 dbdict dbdict
     if {[dict exists $dbdict mysql library ]} {
@@ -41,6 +41,7 @@ proc tcount_mysql {bm interval masterthread} {
                 set connected "true"
             }
             if {$connected} {
+                mysqlcommon::configure_session $mysql_handler
                 return $mysql_handler
             } else {
                 tsv::set application tc_errmsg $message
@@ -50,7 +51,10 @@ proc tcount_mysql {bm interval masterthread} {
             }
         }
 
-        proc read_more { MASTER library mysql_host mysql_port mysql_socket mysql_ssl_options mysql_user mysql_pass mysql_tpch_user mysql_tpch_pass interval old tce bm mysql_tpch_obcompat ob_tenant_name} {
+        proc read_more { MASTER library mysql_host mysql_port mysql_socket mysql_ssl_options mysql_user mysql_pass mysql_tpch_user mysql_tpch_pass interval old tce bm mysql_tpch_obcompat ob_tenant_name database query_timeout} {
+            package require mysqlcommon
+            mysqlcommon::configure $database $query_timeout
+            set counter_reads 0
             set timeout 0
             set iconflag 0
             if { $interval <= 0 } { set interval 10 } 
@@ -58,12 +62,14 @@ proc tcount_mysql {bm interval masterthread} {
             if { ![ info exists tcdata ] } { set tcdata {} }
             if { ![ info exists timedata ] } { set timedata {} }
             if { $bm eq "TPC-C" } {
-                set sqc "show global status where Variable_name = 'Com_commit' or Variable_name =  'Com_rollback'"
+                set sqc [mysqlcommon::counter_sql]
                 set tmp_mysql_user $mysql_user
                 set tmp_mysql_pass $mysql_pass
                 set tval 60
             } else {
-                if {$mysql_tpch_obcompat eq "true"} {
+                if {$database eq "OceanBase"} {
+                    set sqc {SELECT 'Queries', SUM(VALUE) FROM oceanbase.GV$SYSSTAT WHERE NAME = 'sql select count'}
+                } elseif {$mysql_tpch_obcompat eq "true"} {
                     set sqc "select 'Queries' as Variable_name, count(*) as Value FROM oceanbase.GV\$OB_SQL_AUDIT where TENANT_NAME='$ob_tenant_name'"
                 } else {
                     set sqc "show global status where Variable_name = 'Queries' or Variable_name = 'Com_show_status'"
@@ -100,10 +106,25 @@ proc tcount_mysql {bm interval masterthread} {
                     break
                 } else {
                     if { $bm eq "TPC-C" } {
-                        regexp {\{\{Com_commit\ ([0-9]+)\}\ \{Com_rollback\ ([0-9]+)\}\}} $handler_stat all com_comm com_roll
-                        set outc [ expr $com_comm + $com_roll ]
+                        if {[catch {set outc [mysqlcommon::parse_transaction_count [lindex $handler_stat 0]]} message]} {
+                            tsv::set application tc_errmsg $message
+                            thread::send $MASTER show_tc_errmsg
+                            catch {mysqlclose $mysql_handler}
+                            break
+                        }
                     } else {
-                        if {$mysql_tpch_obcompat eq "true"} {
+                        if {$database eq "OceanBase"} {
+                            set outc [lindex $handler_stat 0 0 1]
+                            if {![string is entier -strict $outc]} {
+                                tsv::set application tc_errmsg "OceanBase SQL select counter unavailable"
+                                thread::send $MASTER show_tc_errmsg
+                                catch {mysqlclose $mysql_handler}
+                                break
+                            }
+                            # Exclude the counter's own SELECT requests from its delta.
+                            incr counter_reads
+                            incr outc -$counter_reads
+                        } elseif {$mysql_tpch_obcompat eq "true"} {
                             regexp {\{\{Queries\ ([0-9]+)\}\}} $handler_stat all queries show_stat 
                             set outc [ expr $queries - 1]
                         } else {
@@ -176,5 +197,5 @@ proc tcount_mysql {bm interval masterthread} {
     catch {eval [ subst {thread::send $tc_threadID {lappend ::auto_path [zipfs root]app/lib}}]}
     catch {eval [ subst {thread::send $tc_threadID {::tcl::tm::path add [zipfs root]app/modules modules}}]}
     #Call Transaction Counter to start read_more loop
-    eval [ subst {thread::send -async $tc_threadID { read_more $masterthread $library $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_user [ quotemeta $mysql_pass ] $mysql_tpch_user [ quotemeta $mysql_tpch_pass ] $interval $old tce $bm $mysql_tpch_obcompat $mysql_ob_tenant_name }}]
+    eval [ subst {thread::send -async $tc_threadID { read_more $masterthread $library $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_user [ quotemeta $mysql_pass ] $mysql_tpch_user [ quotemeta $mysql_tpch_pass ] $interval $old tce $bm $mysql_tpch_obcompat $mysql_ob_tenant_name $database $query_timeout }}]
 } 

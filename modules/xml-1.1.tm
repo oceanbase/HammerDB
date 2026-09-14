@@ -193,6 +193,8 @@ return
 	if {$refctr == 2} {
 	set 2ndlevel $val
 	}
+    } elseif {$type eq "XML" && $etype eq "EMPTY" && $refctr >= 2} {
+        dict set $dictname $2ndlevel $val ""
     } else {
        if {$type == "XML" && $etype == "END"} {
     unset -nocomplain myvariable

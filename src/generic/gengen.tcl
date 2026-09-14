@@ -11,7 +11,8 @@ proc gendata_tpcc {} {
         "Oracle" { set db "oracle" }
         "MSSQLServer" { set db "mssql" }
         "Db2" { set db "db2" }
-        "MySQL" { set db "mysql" }
+        "MySQL" -
+        "OceanBase" { set db "mysql" }
         "MariaDB" { set db "maria" }
         "PostgreSQL" { set db "pg" }
     }
@@ -463,7 +464,8 @@ proc gendata_tpch {} {
         "Oracle" { set db "oracle" }
         "MSSQLServer" { set db "mssql" }
         "Db2" { set db "db2" }
-        "MySQL" { set db "mysql" }
+        "MySQL" -
+        "OceanBase" { set db "mysql" }
         "MariaDB" { set db "maria" }
         "PostgreSQL" { set db "pg" }
     }
