@@ -13,8 +13,8 @@ ob_tprocc_init() {
     source "$env_file"
     set +a
 
-    export TMP=${TMP:-$script_dir/results}
-    export TMPDIR=${TMPDIR:-$TMP}
+    export TMP=$script_dir/results
+    export TMPDIR=$TMP
     mkdir -p "$TMP"
 
     local search_dir=$script_dir
@@ -30,4 +30,3 @@ ob_tprocc_init() {
     echo "Cannot find hammerdbcli above $script_dir" >&2
     return 1
 }
-
