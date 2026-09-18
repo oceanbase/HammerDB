@@ -31,6 +31,8 @@ proc build_mysqltpch {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc GatherStatistics { mysql_handler is_oceanbase partition_num} {
@@ -151,6 +153,7 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -723,7 +726,7 @@ proc mk_order { mysql_handler start_rows end_rows upd_num scale_factor oceanbase
 
                 append lineit_val_list ('$lsdate','$lokey', '$ldiscount', '$leprice', '$lsuppkey', '$lquantity', '$lrflag', '$lpartkey', '$lstatus', '$ltax', '$lcdate', '$lrdate', '$lsmode', '$llcnt', '$linstruct', '$lcomment')
             } else {
-                append lineit_val_list (str_to_date('$lsdate','%Y-%M-%d'),'$lokey', '$ldiscount', '$leprice', '$lsuppkey', '$lquantity', '$lrflag', '$lpartkey', '$lstatus', '$ltax', str_to_date('$lcdate','%Y-%M-%d'), str_to_date('$lrdate','%Y-%M-%d'), '$lsmode', '$llcnt', '$linstruct', '$lcomment')
+                append lineit_val_list (str_to_date('$lsdate','%Y-%b-%d'),'$lokey', '$ldiscount', '$leprice', '$lsuppkey', '$lquantity', '$lrflag', '$lpartkey', '$lstatus', '$ltax', str_to_date('$lcdate','%Y-%b-%d'), str_to_date('$lrdate','%Y-%b-%d'), '$lsmode', '$llcnt', '$linstruct', '$lcomment')
             }
 
             if { $l < [ expr $lcnt - 1 ] } {
@@ -739,7 +742,7 @@ proc mk_order { mysql_handler start_rows end_rows upd_num scale_factor oceanbase
             set date [clock format $scanned -format "%Y-%m-%d"]     
             append order_val_list ('$date', '$okey', '$custkey', '$opriority', '$spriority', '$clerk', '$orderstatus', '$totalprice', '$comment')            
         } else {
-            append order_val_list (str_to_date('$date','%Y-%M-%d'), '$okey', '$custkey', '$opriority', '$spriority', '$clerk', '$orderstatus', '$totalprice', '$comment')
+            append order_val_list (str_to_date('$date','%Y-%b-%d'), '$okey', '$custkey', '$opriority', '$spriority', '$clerk', '$orderstatus', '$totalprice', '$comment')
         }
 
         if { ![ expr {$i % 1000} ]  || $i eq $end_rows } {
@@ -981,6 +984,8 @@ set ob_tenant_name \"$mysql_ob_tenant_name\" ;# Oceanbase tenant name
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc standsql { mysql_handler sql RAISEERROR } {
@@ -1042,6 +1047,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db is_oceanbase
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1133,13 +1139,13 @@ proc mk_order_ref { mysql_handler upd_num scale_factor trickle_refresh REFRESH_V
                 incr ocnt
                 set lstatus "F"
             } else { set lstatus "O" }
-            mysql::exec $mysql_handler "INSERT INTO LINEITEM (`L_SHIPDATE`, `L_ORDERKEY`, `L_DISCOUNT`, `L_EXTENDEDPRICE`, `L_SUPPKEY`, `L_QUANTITY`, `L_RETURNFLAG`, `L_PARTKEY`, `L_LINESTATUS`, `L_TAX`, `L_COMMITDATE`, `L_RECEIPTDATE`, `L_SHIPMODE`, `L_LINENUMBER`, `L_SHIPINSTRUCT`, `L_COMMENT`) VALUES (str_to_date('$lsdate','%Y-%M-%d'),'$lokey', '$ldiscount', '$leprice', '$lsuppkey', '$lquantity', '$lrflag', '$lpartkey', '$lstatus', '$ltax', str_to_date('$lcdate','%Y-%M-%d'), str_to_date('$lrdate','%Y-%M-%d'), '$lsmode', '$llcnt', '$linstruct', '$lcomment')"
+            mysql::exec $mysql_handler "INSERT INTO LINEITEM (`L_SHIPDATE`, `L_ORDERKEY`, `L_DISCOUNT`, `L_EXTENDEDPRICE`, `L_SUPPKEY`, `L_QUANTITY`, `L_RETURNFLAG`, `L_PARTKEY`, `L_LINESTATUS`, `L_TAX`, `L_COMMITDATE`, `L_RECEIPTDATE`, `L_SHIPMODE`, `L_LINENUMBER`, `L_SHIPINSTRUCT`, `L_COMMENT`) VALUES (str_to_date('$lsdate','%Y-%b-%d'),'$lokey', '$ldiscount', '$leprice', '$lsuppkey', '$lquantity', '$lrflag', '$lpartkey', '$lstatus', '$ltax', str_to_date('$lcdate','%Y-%b-%d'), str_to_date('$lrdate','%Y-%b-%d'), '$lsmode', '$llcnt', '$linstruct', '$lcomment')"
         }
 	set totalprice [ expr double($totalprice) / 100 ]
         if { $REFRESH_VERBOSE } {
             puts "Refresh Insert Orderkey $okey..."
         }
-        mysql::exec $mysql_handler "INSERT INTO ORDERS (`O_ORDERDATE`, `O_ORDERKEY`, `O_CUSTKEY`, `O_ORDERPRIORITY`, `O_SHIPPRIORITY`, `O_CLERK`, `O_ORDERSTATUS`, `O_TOTALPRICE`, `O_COMMENT`) VALUES (str_to_date('$date','%Y-%M-%d'), '$okey', '$custkey', '$opriority', '$spriority', '$clerk', '$orderstatus', '$totalprice', '$comment')"
+        mysql::exec $mysql_handler "INSERT INTO ORDERS (`O_ORDERDATE`, `O_ORDERKEY`, `O_CUSTKEY`, `O_ORDERPRIORITY`, `O_SHIPPRIORITY`, `O_CLERK`, `O_ORDERSTATUS`, `O_TOTALPRICE`, `O_COMMENT`) VALUES (str_to_date('$date','%Y-%b-%d'), '$okey', '$custkey', '$opriority', '$spriority', '$clerk', '$orderstatus', '$totalprice', '$comment')"
         if { ![ expr {$i % 1000} ] } {
             mysql::commit $mysql_handler
         }
@@ -1645,6 +1651,8 @@ set ob_tenant_name \"$mysql_ob_tenant_name\" ;# Oceanbase tenant name
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc standsql { mysql_handler sql RAISEERROR } {
@@ -1706,6 +1714,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db is_oceanbase
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1802,6 +1811,8 @@ proc delete_mysqltpch {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc chk_socket { host socket } {
@@ -1848,6 +1859,7 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1911,6 +1923,8 @@ set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpchcommon::* }
 
 proc chk_socket { host socket } {
@@ -1957,6 +1971,7 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
 	if { [ info exists ssl_status ] } {
 	puts [ join $ssl_status ]
 	}
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1981,7 +1996,7 @@ proc check_tpch { host port socket ssl_options user password dbase scale_factor 
 	#Check 2 Tables Exist
 	puts "Check tables and indices"
 	foreach table [dict keys $tables] {
-	set match [ lsearch $table_exists $table ]
+	set match [ lsearch -nocase $table_exists $table ]
 	if { $match == -1 } {
 	error "TPROC-H Schema check failed $dbase schema is missing table $table"
 	} else {

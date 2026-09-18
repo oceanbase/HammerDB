@@ -1,3 +1,19 @@
+# Resolve native formats once; additional database categories provide a
+# prefix-based callback which can select a format from their own configuration.
+proc data_generation_format {database workload} {
+    set formats {Oracle oracle MSSQLServer mssql Db2 db2 MySQL mysql MariaDB maria PostgreSQL pg}
+    if {[dict exists $formats $database]} {return [dict get $formats $database]}
+    global dbdict
+    dict for {key attributes} $dbdict {
+        if {[dict get $attributes name] eq $database} {
+            set callback [dict get $attributes prefix]_data_generation_format
+            if {[llength [info commands $callback]]} {return [$callback $workload]}
+            break
+        }
+    }
+    error "Data generation is not supported for $database"
+}
+
 proc gendata_tpcc {} {
     global rdbms gen_count_ware gen_directory gen_num_vu num_vu maxvuser virtual_users lprefix suppo ntimes threadscreated _ED
     if {  ![ info exists gen_count_ware ] } { set gen_count_ware "1" }
@@ -7,14 +23,7 @@ proc gendata_tpcc {} {
     if {  [ info exists lprefix ] } { ; } else { set lprefix "load" }
     if {  [ info exists virtual_users ] } { ; } else { set virtual_users 1 }
 
-    switch $rdbms {
-        "Oracle" { set db "oracle" }
-        "MSSQLServer" { set db "mssql" }
-        "Db2" { set db "db2" }
-        "MySQL" { set db "mysql" }
-        "MariaDB" { set db "maria" }
-        "PostgreSQL" { set db "pg" }
-    }
+    set db [data_generation_format $rdbms tpcc]
     set install_message "Ready to generate the data for a $gen_count_ware Warehouse $rdbms TPROC-C schema\nin directory $gen_directory ?" 
     if {[ tk_messageBox -title "Generate Data" -icon question -message $install_message -type yesno ] == yes} { 
         if { $gen_num_vu eq 1 || $gen_count_ware eq 1 } {
@@ -459,14 +468,7 @@ proc gendata_tpch {} {
     if {  ![ info exists rdbms ] } { set rdbms "Oracle" }
     if {  [ info exists lprefix ] } { ; } else { set lprefix "load" }
     if {  [ info exists virtual_users ] } { ; } else { set virtual_users 1 }
-    switch $rdbms {
-        "Oracle" { set db "oracle" }
-        "MSSQLServer" { set db "mssql" }
-        "Db2" { set db "db2" }
-        "MySQL" { set db "mysql" }
-        "MariaDB" { set db "maria" }
-        "PostgreSQL" { set db "pg" }
-    }
+    set db [data_generation_format $rdbms tpch]
     set install_message "Ready to generate the data for a $gen_scale_fact Scale Factor $rdbms TPROC-H schema\nin directory $gen_directory ?" 
     if {[ tk_messageBox -title "Generate Data" -icon question -message $install_message -type yesno ] == yes} { 
         if { $gen_num_vu eq 1 } {
