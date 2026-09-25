@@ -31,6 +31,8 @@ proc build_mysqltpch {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc GatherStatistics { mysql_handler is_oceanbase partition_num} {
@@ -151,6 +153,7 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -762,6 +765,7 @@ proc mk_order { mysql_handler start_rows end_rows upd_num scale_factor oceanbase
 }
 
 proc do_tpch { host port socket ssl_options scale_fact user password db mysql_tpch_storage_engine num_vu oceanbase_db ob_partition_num ob_tenant_name} {
+    try {
     global mysqlstatus
     global dist_names dist_weights weights dists weights
     ###############################################
@@ -846,6 +850,7 @@ proc do_tpch { host port socket ssl_options scale_fact user password db mysql_tp
             after 10000
             set prevactive 0
             while 1 {
+                if {[tsv::get application abort]} {error "Schema build aborted after a loader failure"}
                 set idlcnt 0; set lvcnt 0; set dncnt 0;
                 for {set th 2} {$th <= $totalvirtualusers } {incr th} {
                     switch [tsv::lindex common thrdlst $th] {
@@ -928,6 +933,11 @@ proc do_tpch { host port socket ssl_options scale_fact user password db mysql_tp
         puts "[ string toupper $db ] SCHEMA COMPLETE"
         return
     }
+    } on error {message options} {
+        # Notify the monitor and workers without losing the original error.
+        tsv::set application abort 1
+        return -options $options $message
+    }
 }
 }
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end "do_tpch $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_scale_fact $mysql_tpch_user [ quotemeta $mysql_tpch_pass ] $mysql_tpch_dbase $mysql_tpch_storage_engine $mysql_num_tpch_threads $mysql_tpch_obcompat $mysql_ob_partition_num $mysql_ob_tenant_name"
@@ -974,6 +984,8 @@ set ob_tenant_name \"$mysql_ob_tenant_name\" ;# Oceanbase tenant name
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc standsql { mysql_handler sql RAISEERROR } {
@@ -1035,6 +1047,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db is_oceanbase
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1638,6 +1651,8 @@ set ob_tenant_name \"$mysql_ob_tenant_name\" ;# Oceanbase tenant name
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc standsql { mysql_handler sql RAISEERROR } {
@@ -1699,6 +1714,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db is_oceanbase
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1795,6 +1811,8 @@ proc delete_mysqltpch {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc chk_socket { host socket } {
@@ -1841,6 +1859,7 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1904,6 +1923,8 @@ set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpchcommon::* }
 
 proc chk_socket { host socket } {
@@ -1950,6 +1971,7 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
 	if { [ info exists ssl_status ] } {
 	puts [ join $ssl_status ]
 	}
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1974,13 +1996,13 @@ proc check_tpch { host port socket ssl_options user password dbase scale_factor 
 	#Check 2 Tables Exist
 	puts "Check tables and indices"
 	foreach table [dict keys $tables] {
-	set match [ lsearch $table_exists $table ]
+	set match [ lsearch -nocase $table_exists $table ]
 	if { $match == -1 } {
 	error "TPROC-H Schema check failed $dbase schema is missing table $table"
 	} else {
-	if { $table eq "supplier" } {
+	if { $table eq "SUPPLIER" } {
 	#Check 3 scale factor in schema is the same as dict setting
-        set count [  mysql::sel $mysql_handler "select count(*) from supplier" -flatlist ]
+        set count [  mysql::sel $mysql_handler "select count(*) from $table" -flatlist ]
 	if { $count } {
         set actual_scale_factor [ expr {$count / 10000} ]
         if { $actual_scale_factor != $scale_factor } {

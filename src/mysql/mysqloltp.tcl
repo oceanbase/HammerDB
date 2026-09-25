@@ -33,6 +33,8 @@ proc build_mysqltpcc {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpcccommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpcccommon::* }
 proc CreateStoredProcs { mysql_handler } {
     puts "CREATING TPCC STORED PROCEDURES"
@@ -476,6 +478,7 @@ proc ConnectToMySQL { host port socket ssl_options user password } {
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -985,6 +988,7 @@ proc chk_socket { host socket } {
 }
 
 proc do_tpcc { host port socket ssl_options count_ware user password db mysql_storage_engine partition history_pk num_vu } {
+    try {
     global mysqlstatus
     set MAXITEMS 100000
     set CUST_PER_DIST 3000
@@ -1040,6 +1044,7 @@ proc do_tpcc { host port socket ssl_options count_ware user password db mysql_st
             puts "Monitoring Workers..."
             set prevactive 0
             while 1 {
+                if {[tsv::get application abort]} {error "Schema build aborted after a loader failure"}
                 set idlcnt 0; set lvcnt 0; set dncnt 0;
                 for {set th 2} {$th <= $totalvirtualusers } {incr th} {
                     switch [tsv::lindex common thrdlst $th] {
@@ -1100,6 +1105,11 @@ proc do_tpcc { host port socket ssl_options count_ware user password db mysql_st
         puts "[ string toupper $db ] SCHEMA COMPLETE"
         mysqlclose $mysql_handler
         return
+    }
+    } on error {message options} {
+        # Notify the monitor and workers without losing the original error.
+        tsv::set application abort 1
+        return -options $options $message
     }
 }
 }
@@ -1532,10 +1542,7 @@ proc insert_mysql_no_stored_procs { testtype timedtype } {
     if { $byname } {
       set namecnt [ mysql::sel $mysql_handler "SELECT count(c_id) FROM customer WHERE c_last = '$name' AND c_d_id = $p_c_d_id AND c_w_id = $p_c_w_id" -flatlist ]
       set cust_list [ mysql::sel $mysql_handler "SELECT c_first, c_middle, c_id, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = $p_c_w_id AND c_d_id = $p_c_d_id AND c_last = '$name' ORDER BY c_first" -list ]
-      if { [ expr {$namecnt % 2} ] eq 1 } {
-        set $namecnt [ expr {$namecnt + 1} ]
-      }
-      set cust_id_to_query [ lindex $cust_list [ expr {$namecnt / 2} ] ]
+      set cust_id_to_query [ lindex $cust_list [ expr {($namecnt - 1) / 2} ] ]
       lassign $cust_id_to_query p_c_first p_c_middle p_c_id p_c_street_1 p_c_street_2 p_c_city p_c_state p_c_zip p_c_phone p_c_credit p_c_credit_lim p_c_discount p_c_balance p_c_since
       set p_c_last $name
     } else {
@@ -1580,14 +1587,18 @@ proc insert_mysql_no_stored_procs { testtype timedtype } {
       }
       set cust_list [ mysql::sel $mysql_handler "SELECT c_balance, c_first, c_middle, c_id FROM customer WHERE c_last = '$name' AND c_d_id = $d_id AND c_w_id = $w_id ORDER BY c_first" -list ]
       set cust_id_to_query [ lindex $cust_list [ expr ($namecnt/2)-1 ] ]
+      lassign $cust_id_to_query os_c_balance os_c_first os_c_middle c_id
+      set os_c_last $name
     } else {
-      set cust_id_to_query [ mysql::sel $mysql_handler "SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_id = $c_id AND c_d_id = $d_id AND c_w_id = $w_id" -list ]
+      set cust_id_to_query [ mysql::sel $mysql_handler "SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_id = $c_id AND c_d_id = $d_id AND c_w_id = $w_id" -flatlist ]
+      lassign $cust_id_to_query os_c_balance os_c_first os_c_middle os_c_last
     }
-    lassign $cust_id_to_query os_c_balance os_c_first os_c_middle os_c_last
     set cust_orders [ mysql::sel $mysql_handler "SELECT o_id, o_carrier_id, o_entry_d FROM (SELECT o_id, o_carrier_id, o_entry_d FROM orders where o_d_id = $d_id AND o_w_id = $w_id and o_c_id = $c_id ORDER BY o_id DESC) AS sb LIMIT 1" -flatlist ]
     if { [ llength $cust_orders ] eq 0 } {
       set no_order_status "No orders for customer"
       set o_id 0
+      set o_entry_d ""
+      set o_carrier_id ""
     } else {
       lassign $cust_orders o_id o_carrier_id o_entry_d
     }
@@ -1653,15 +1664,10 @@ proc insert_mysql_no_stored_procs { testtype timedtype } {
 
         set index_sp_1 [.ed_mainFrame.mainwin.textFrame.left.text search -forwards "\#NEW ORDER" 1.0 ]
         set index_sp_2 [.ed_mainFrame.mainwin.textFrame.left.text search -backwards "proc prep_statement" end ]
-        #End of run loop is previous line
-	#CLI indexes are characters in the string and integers GUI indexes are based on lines and position. Move back 1 line
-	if { [ string is entier $index_sp_2 ] } {
-       set index_sp_2 [ expr $index_sp_2 - 10 ]
-       	} else {
-       set index_sp_2 [ expr $index_sp_2 - 1 ]
-	}
-        #Delete stored procedures
-        .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index_sp_1 $index_sp_2+1l
+        # Remove up to the next procedure, including the old closing braces.
+        # CLI offsets are inclusive; Tk text indices use an exclusive end.
+        if {[string is entier -strict $index_sp_2]} {incr index_sp_2 -1}
+        .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index_sp_1 $index_sp_2
         #Insert no stored procedures version
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert $index_sp_1 "$neword_no_sp \n\n $pay_no_sp \n\n $ostat_no_sp \n\n $deliv_no_sp \n\n $stock_no_sp \n\n"
 }
@@ -1701,6 +1707,8 @@ set prepare \"$mysql_prepared\" ;# Use prepared statements
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpcccommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpcccommon::* }
 #TIMESTAMP
 proc gettimestamp { } {
@@ -1748,6 +1756,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db } {
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -2024,6 +2033,8 @@ set prepare \"$mysql_prepared\" ;# Use prepared statements
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpcccommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpcccommon::* }
 
 if { [ chk_thread ] eq "FALSE" } {
@@ -2070,6 +2081,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db } {
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -2105,12 +2117,10 @@ switch $myposition {
             }
             if { [ tsv::get application abort ] } { break }
             puts "Rampup complete, Taking start Transaction Count."
-            if {[catch {set handler_stat [ list [ mysql::sel $mysql_handler "show global status where Variable_name = 'Com_commit' or Variable_name =  'Com_rollback'" -list ] ]}]} {
-                puts stderr {error, failed to query transaction statistics}
-                return
-            } else {
-                regexp {\{\{Com_commit\ ([0-9]+)\}\ \{Com_rollback\ ([0-9]+)\}\}} $handler_stat all com_comm com_roll
-                set start_trans [ expr $com_comm + $com_roll ]
+            if {[catch {set start_trans [mysqlcommon::transaction_count $mysql_handler]} message]} {
+                tsv::set application abort 1
+                catch {mysqlclose $mysql_handler}
+                error "Transaction statistics failed: $message"
             }
             if {[catch {set start_nopm [ list [ mysql::sel $mysql_handler "select sum(d_next_o_id) from district" -list ] ]}]} {
                 puts stderr {error, failed to query district table}
@@ -2129,12 +2139,10 @@ switch $myposition {
             }
             if { [ tsv::get application abort ] } { break }
             puts "Test complete, Taking end Transaction Count."
-            if {[catch {set handler_stat [ list [ mysql::sel $mysql_handler "show global status where Variable_name = 'Com_commit' or Variable_name =  'Com_rollback'" -list ] ]}]} {
-                puts stderr {error, failed to query transaction statistics}
-                return
-            } else {
-                regexp {\{\{Com_commit\ ([0-9]+)\}\ \{Com_rollback\ ([0-9]+)\}\}} $handler_stat all com_comm com_roll
-                set end_trans [ expr $com_comm + $com_roll ]
+            if {[catch {set end_trans [mysqlcommon::transaction_count $mysql_handler]} message]} {
+                tsv::set application abort 1
+                catch {mysqlclose $mysql_handler}
+                error "Transaction statistics failed: $message"
             }
             if {[catch {set end_nopm [ list [ mysql::sel $mysql_handler "select sum(d_next_o_id) from district" -list ] ]}]} {
                 puts stderr {error, failed to query district table}
@@ -2143,7 +2151,7 @@ switch $myposition {
             set tpm [ expr {($end_trans - $start_trans)/$durmin} ]
             set nopm [ expr {($end_nopm - $start_nopm)/$durmin} ]
             puts "[ expr $totalvirtualusers - 1 ] Active Virtual Users configured"
-            puts [ testresult $nopm $tpm MySQL ]
+            puts [ testresult $nopm $tpm [mysqlcommon::database] ]
             tsv::set application abort 1
             if { $mode eq "Primary" } { eval [subst {thread::send -async $MASTER { remote_command ed_kill_vusers }}] }
             catch { mysqlclose $mysql_handler }
@@ -2407,6 +2415,8 @@ set async_delay $mysql_async_delay;# Delay in ms between logins of asynchronous 
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpcccommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpcccommon::* }
 if [catch {package require promise } message] { error "Failed to load promise package for asynchronous clients" }
 
@@ -2454,6 +2464,7 @@ proc ConnectToMySQL { host port socket ssl_options user password db } {
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -2501,6 +2512,7 @@ proc ConnectToMySQLAsynch { host port socket ssl_options user password db client
         }
         mysqluse $mysql_handler $db
         mysql::autocommit $mysql_handler 0
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         return "$clientname:login failed:$mysqlstatus(message)"
@@ -2535,12 +2547,10 @@ switch $myposition {
             }
             if { [ tsv::get application abort ] } { break }
             puts "Rampup complete, Taking start Transaction Count."
-            if {[catch {set handler_stat [ list [ mysql::sel $mysql_handler "show global status where Variable_name = 'Com_commit' or Variable_name =  'Com_rollback'" -list ] ]}]} {
-                puts stderr {error, failed to query transaction statistics}
-                return
-            } else {
-                regexp {\{\{Com_commit\ ([0-9]+)\}\ \{Com_rollback\ ([0-9]+)\}\}} $handler_stat all com_comm com_roll
-                set start_trans [ expr $com_comm + $com_roll ]
+            if {[catch {set start_trans [mysqlcommon::transaction_count $mysql_handler]} message]} {
+                tsv::set application abort 1
+                catch {mysqlclose $mysql_handler}
+                error "Transaction statistics failed: $message"
             }
             if {[catch {set start_nopm [ list [ mysql::sel $mysql_handler "select sum(d_next_o_id) from district" -list ] ]}]} {
                 puts stderr {error, failed to query district table}
@@ -2559,12 +2569,10 @@ switch $myposition {
             }
             if { [ tsv::get application abort ] } { break }
             puts "Test complete, Taking end Transaction Count."
-            if {[catch {set handler_stat [ list [ mysql::sel $mysql_handler "show global status where Variable_name = 'Com_commit' or Variable_name =  'Com_rollback'" -list ] ]}]} {
-                puts stderr {error, failed to query transaction statistics}
-                return
-            } else {
-                regexp {\{\{Com_commit\ ([0-9]+)\}\ \{Com_rollback\ ([0-9]+)\}\}} $handler_stat all com_comm com_roll
-                set end_trans [ expr $com_comm + $com_roll ]
+            if {[catch {set end_trans [mysqlcommon::transaction_count $mysql_handler]} message]} {
+                tsv::set application abort 1
+                catch {mysqlclose $mysql_handler}
+                error "Transaction statistics failed: $message"
             }
             if {[catch {set end_nopm [ list [ mysql::sel $mysql_handler "select sum(d_next_o_id) from district" -list ] ]}]} {
                 puts stderr {error, failed to query district table}
@@ -2573,7 +2581,7 @@ switch $myposition {
             set tpm [ expr {($end_trans - $start_trans)/$durmin} ]
             set nopm [ expr {($end_nopm - $start_nopm)/$durmin} ]
             puts "[ expr $totalvirtualusers - 1 ] VU \* $async_client AC \= [ expr ($totalvirtualusers - 1) * $async_client ] Active Sessions configured"
-            puts [ testresult $nopm $tpm MySQL ]
+            puts [ testresult $nopm $tpm [mysqlcommon::database] ]
             tsv::set application abort 1
             if { $mode eq "Primary" } { eval [subst {thread::send -async $MASTER { remote_command ed_kill_vusers }}] }
             catch { mysqlclose $mysql_handler }
@@ -2879,6 +2887,8 @@ proc delete_mysqltpcc {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpcccommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpcccommon::* }
 
 proc chk_socket { host socket } {
@@ -2921,6 +2931,7 @@ proc ConnectToMySQL { host port socket ssl_options user password } {
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -2984,6 +2995,8 @@ set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
+package require mysqlcommon
+mysqlcommon::configure MySQL 0
 if [catch {package require tpcccommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpcccommon::* }
 
 proc chk_socket { host socket } {
@@ -3026,6 +3039,7 @@ proc ConnectToMySQL { host port socket ssl_options user password } {
 	if { [ info exists ssl_status ] } {
 	puts [ join $ssl_status ]
 	}
+        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
