@@ -1,7 +1,7 @@
 # Resolve native formats once; additional database categories provide a
 # prefix-based callback which can select a format from their own configuration.
 proc data_generation_format {database workload} {
-    set formats {Oracle oracle MSSQLServer mssql Db2 db2 MySQL mysql MariaDB maria PostgreSQL pg}
+    set formats {Oracle oracle MSSQLServer mssql Db2 db2 MySQL mysql MariaDB maria VillageSQL vsql PostgreSQL pg}
     if {[dict exists $formats $database]} {return [dict get $formats $database]}
     global dbdict
     dict for {key attributes} $dbdict {

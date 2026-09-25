@@ -57,4 +57,12 @@
     <workloads>TPROC-C TPROC-H</workloads>
     <commands>mysql::sel mysqluse mysqlexec mysqlclose mysql::commit mysql::rollback</commands>
 </oceanbase>
+<villagesql>
+        <name>VillageSQL</name>
+        <description>VillageSQL</description>
+        <prefix>vsql</prefix>
+        <library>mysqltcl</library>
+        <workloads>TPROC-C TPROC-H</workloads>
+        <commands>mysql::sel mysqluse mysqlescape mysqlsel mysqlnext mysqlseek mysqlmap mysqlexec mysqlclose mysqlinfo mysqlresult mysqlcol mysqlstate mysqlinsertid mysqlquery mysqlendquery mysqlbaseinfo mysqlping mysqlchangeuser mysqlreceive</commands>
+</villagesql>
 </database>
