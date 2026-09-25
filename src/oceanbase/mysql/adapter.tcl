@@ -68,6 +68,11 @@ namespace eval oceanbase::mysql {
         if {[string length $_ED(package)] > 0} {
             set timeout [dict get $configoceanbase connection ob_query_timeout]
             set _ED(package) [string map [list {mysqlcommon::configure MySQL 0} [list mysqlcommon::configure OceanBase $timeout]] $_ED(package)]
+            if {$workload eq "tpch" && $action in {build test}} {
+                # OceanBase requires abbreviated-month parsing for generated TPROC-H dates.
+                # Keep the shared MySQL generator on its existing full-month parser path.
+                set _ED(package) [string map [list {'%Y-%M-%d'} {'%Y-%b-%d'}] $_ED(package)]
+            }
             if {$graphical} {
                 .ed_mainFrame.mainwin.textFrame.left.text fastdelete 1.0 end
                 .ed_mainFrame.mainwin.textFrame.left.text fastinsert end $_ED(package)

@@ -63,6 +63,28 @@ test mysql-after-ob {A MySQL script explicitly resets the runtime database mode}
     loadscript
     expr {[string first {mysqlcommon::configure MySQL 0} $::_ED(package)] >= 0 && [string first {mysqlcommon::configure OceanBase} $::_ED(package)] < 0}
 } -result 1
+# Generate schema scripts without allocating loader threads or connecting to a database.
+rename load_virtual original_load_virtual
+proc load_virtual {} {}
+proc tpch_date_formats {script} {
+    list [regexp -all {str_to_date\('[^']*','%Y-%M-%d'\)} $script] \
+         [regexp -all {str_to_date\('[^']*','%Y-%b-%d'\)} $script]
+}
+foreach database {mysql ob mysql} label {mysql-before-ob oceanbase mysql-after-ob} expected {{4 0} {0 4} {4 0}} {
+    dbset db $database
+    dbset bm TPROC-H
+    test date-build-$label {Only OceanBase initial-load SQL uses abbreviated-month parsing} -body {
+        if {$database eq "ob"} {build_obtpch} else {build_mysqltpch}
+        tpch_date_formats $::_ED(package)
+    } -result $expected
+    test date-refresh-$label {Only OceanBase refresh SQL uses abbreviated-month parsing} -body {
+        loadscript
+        tpch_date_formats $::_ED(package)
+    } -result $expected
+}
+rename load_virtual {}
+rename original_load_virtual load_virtual
+
 set failed $::tcltest::numTests(Failed)
 cleanupTests
 exit [expr {$failed > 0}]
