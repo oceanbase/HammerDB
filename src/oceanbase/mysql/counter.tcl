@@ -199,5 +199,9 @@ proc tcount_oceanbase_mysql {bm interval masterthread query_timeout} {
     catch {eval [ subst {thread::send $tc_threadID {lappend ::auto_path [zipfs root]app/lib}}]}
     catch {eval [ subst {thread::send $tc_threadID {::tcl::tm::path add [zipfs root]app/modules modules}}]}
     #Call Transaction Counter to start read_more loop
-    eval [ subst {thread::send -async $tc_threadID { read_more $masterthread $library $mysql_host $mysql_port $mysql_socket {$mysql_ssl_options} $mysql_user [ quotemeta $mysql_pass ] $mysql_tpch_user [ quotemeta $mysql_tpch_pass ] $interval $old tce $bm $mysql_tpch_obcompat $mysql_ob_tenant_name $database $query_timeout }}]
+    # Keep empty passwords and values containing Tcl syntax as single arguments.
+    thread::send -async $tc_threadID [list read_more $masterthread $library \
+        $mysql_host $mysql_port $mysql_socket $mysql_ssl_options $mysql_user $mysql_pass \
+        $mysql_tpch_user $mysql_tpch_pass $interval $old tce $bm \
+        $mysql_tpch_obcompat $mysql_ob_tenant_name $database $query_timeout]
 }

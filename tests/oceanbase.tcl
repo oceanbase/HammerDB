@@ -209,6 +209,39 @@ test schema-operation-stack {GUI loader sizing can identify schema operations th
     interp delete $worker
 } -result {{1 build_schema} {1 check_schema} {1 delete_schema} {sentinel unchanged}}
 
+test counter-start-arguments {Counter thread startup preserves empty and special-character passwords} -setup {
+    set worker [interp create]
+    $worker eval {
+        namespace eval thread {
+            proc create {script} {return counter-worker}
+            proc send {args} {
+                set command [lindex $args end]
+                if {[lindex $command 0] eq "read_more"} {set ::counter_command $command}
+            }
+        }
+        set dbdict {mysql {library mysqltcl}}
+        set mysql_ssl_options {}
+    }
+    $worker eval [list source [file join $root src generic gentccmn.tcl]]
+    $worker eval [list source [file join $root src oceanbase mysql counter.tcl]]
+} -body {
+    set results {}
+    foreach password [list {} {two words} {a;[error unsafe]$x\{b}] {
+        set config [::XML::To_Dict [file join $root config oceanbase.xml]]
+        dict set config tpcc ob_pass $password
+        dict set config tpch ob_tpch_pass $password
+        $worker eval [list set configmysql [oceanbase::mysql::config $config]]
+        $worker eval {tcount_oceanbase_mysql TPC-C 10 main 120}
+        set command [$worker eval {set counter_command}]
+        lappend results [expr {[llength $command] == 19 &&
+            [lindex $command 8] eq $password && [lindex $command 10] eq $password &&
+            [lindex $command end] == 120}]
+    }
+    set results
+} -cleanup {
+    interp delete $worker
+} -result {1 1 1}
+
 test mode-legacy {Existing configurations default to the MySQL backend} -body {
     oceanbase::backend {connection {ob_host localhost}}
 } -result ::oceanbase::mysql
