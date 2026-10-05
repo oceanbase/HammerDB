@@ -73,16 +73,6 @@ if { $dbdict eq "" } {
     Dict2SQLite "database" $dbdict
 }
 
-# Merge newly registered databases without replacing saved database settings.
-set database_defaults [regsub -all {(TP)(RO)(C-[CH])} [::XML::To_Dict $dirname/database.xml] {\1\3}]
-dict for {database attributes} $database_defaults {
-    if {![dict exists $dbdict $database]} {
-        dict set dbdict $database $attributes
-        Dict2SQLite "database" $dbdict
-    }
-}
-unset database_defaults
-
 #Load database details in dict named configdbname
 foreach { key } [ dict keys $dbdict ] {
     set dictname config$key
@@ -90,16 +80,6 @@ foreach { key } [ dict keys $dbdict ] {
     if { $dbconfdict eq "" } {
         set dbconfdict [ ::XML::To_Dict $dirname/$key.xml ]
         Dict2SQLite $key $dbconfdict
-    }
-    # Apply only OceanBase defaults, preserving existing values and other databases.
-    if {$key eq "oceanbase"} {
-        package require oceanbaseconfig
-        set normalized [oceanbaseconfig::normalize $dbconfdict]
-        if {$normalized ne $dbconfdict} {
-            set dbconfdict $normalized
-            Dict2SQLite $key $dbconfdict
-        }
-        unset normalized
     }
     set $dictname $dbconfdict
     set prefix [ dict get $dbdict $key prefix ]

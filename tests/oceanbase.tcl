@@ -119,17 +119,37 @@ test defaults-preserved {Normalization preserves configured values and explicit 
 test defaults-oracle {MySQL password defaults are not injected into another mode} -body {
     dict exists [oceanbaseconfig::normalize {connection {ob_compatibility_mode oracle}}] tpcc
 } -result 0
-test data-native {Existing native data formats are unchanged} -body {
+test data-native {Existing native formats are unchanged in both generators} -setup {
+    set had_rdbms [info exists ::rdbms]
+    if {$had_rdbms} {set saved_rdbms $::rdbms}
+    set had_dialog [llength [info commands tk_messageBox]]
+    if {$had_dialog} {rename tk_messageBox saved_data_dialog}
+    proc tk_messageBox {args} {set ::selected_format [uplevel 1 {set db}]; return no}
+} -body {
     set result {}
-    foreach db {Oracle MSSQLServer Db2 MySQL MariaDB PostgreSQL} {lappend result [data_generation_format $db tpcc]}
+    foreach database {Oracle MSSQLServer Db2 MySQL MariaDB VillageSQL PostgreSQL} {
+        set ::rdbms $database
+        gendata_tpcc
+        lappend result $::selected_format
+        gendata_tpch
+        lappend result $::selected_format
+    }
     set result
-} -result {oracle mssql db2 mysql maria pg}
+} -cleanup {
+    rename tk_messageBox {}
+    if {$had_dialog} {rename saved_data_dialog tk_messageBox}
+    if {$had_rdbms} {set ::rdbms $saved_rdbms} else {unset ::rdbms}
+    unset ::selected_format
+} -result {oracle oracle mssql mssql db2 db2 mysql mysql maria maria vsql vsql pg pg}
 test data-mode-dispatch {Both generators obtain their format from the selected backend} -setup {
     set saved_ob $::configoceanbase
     set saved_backends $::oceanbase::backends
-    set had_dbdict [info exists ::dbdict]
-    if {$had_dbdict} {set saved_dbdict $::dbdict}
-    set ::dbdict {oceanbase {name OceanBase prefix ob}}
+    set had_rdbms [info exists ::rdbms]
+    if {$had_rdbms} {set saved_rdbms $::rdbms}
+    set ::rdbms OceanBase
+    set had_dialog [llength [info commands tk_messageBox]]
+    if {$had_dialog} {rename tk_messageBox saved_data_dialog}
+    proc tk_messageBox {args} {set ::selected_format [uplevel 1 {set db}]; return no}
     namespace eval ::ob_format_test {
         proc data_format {workload} {lappend ::format_calls $workload; return oracle}
     }
@@ -137,11 +157,17 @@ test data-mode-dispatch {Both generators obtain their format from the selected b
     dict set ::configoceanbase connection ob_compatibility_mode oracle
     set ::format_calls {}
 } -body {
-    list [data_generation_format OceanBase tpcc] [data_generation_format OceanBase tpch] $::format_calls
+    gendata_tpcc
+    set c $::selected_format
+    gendata_tpch
+    list $c $::selected_format $::format_calls
 } -cleanup {
     set ::configoceanbase $saved_ob
     set ::oceanbase::backends $saved_backends
-    if {$had_dbdict} {set ::dbdict $saved_dbdict} else {unset ::dbdict}
+    rename tk_messageBox {}
+    if {$had_dialog} {rename saved_data_dialog tk_messageBox}
+    if {$had_rdbms} {set ::rdbms $saved_rdbms} else {unset ::rdbms}
+    unset ::selected_format
     namespace delete ::ob_format_test
     unset ::format_calls
 } -result {oracle oracle {tpcc tpch}}
