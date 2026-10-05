@@ -31,8 +31,6 @@ proc build_mysqltpch {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
-package require mysqlcommon
-mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc GatherStatistics { mysql_handler is_oceanbase partition_num} {
@@ -153,7 +151,6 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
-        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -963,8 +960,6 @@ set ob_tenant_name \"$mysql_ob_tenant_name\" ;# Oceanbase tenant name
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
-package require mysqlcommon
-mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc standsql { mysql_handler sql RAISEERROR } {
@@ -1026,7 +1021,6 @@ proc ConnectToMySQL { host port socket ssl_options user password db is_oceanbase
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
-        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1636,8 +1630,6 @@ set ob_tenant_name \"$mysql_ob_tenant_name\" ;# Oceanbase tenant name
 "
     .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {#LOAD LIBRARIES AND MODULES
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
-package require mysqlcommon
-mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc standsql { mysql_handler sql RAISEERROR } {
@@ -1699,7 +1691,6 @@ proc ConnectToMySQL { host port socket ssl_options user password db is_oceanbase
         if { [ info exists ssl_status ] } {
             puts [ join $ssl_status ]
         }
-        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1796,8 +1787,6 @@ proc delete_mysqltpch {} {
 set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {if [catch {package require $library} message] { error "Failed to load $library - $message" }
-package require mysqlcommon
-mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpch common functions" } else { namespace import tpchcommon::* }
 
 proc chk_socket { host socket } {
@@ -1844,7 +1833,6 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
         if { [ info exists ssl_status ] } {
         puts [ join $ssl_status ]
         }
-        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1908,8 +1896,6 @@ set library $library
 "
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert end {
 if [catch {package require $library} message] { error "Failed to load $library - $message" }
-package require mysqlcommon
-mysqlcommon::configure MySQL 0
 if [catch {package require tpchcommon} ] { error "Failed to load tpcc common functions" } else { namespace import tpchcommon::* }
 
 proc chk_socket { host socket } {
@@ -1956,7 +1942,6 @@ proc ConnectToMySQL { host port socket ssl_options user password is_oceanbase ob
 	if { [ info exists ssl_status ] } {
 	puts [ join $ssl_status ]
 	}
-        mysqlcommon::configure_session $mysql_handler
         return $mysql_handler
     } else {
         error $mysqlstatus(message)
@@ -1981,7 +1966,7 @@ proc check_tpch { host port socket ssl_options user password dbase scale_factor 
 	#Check 2 Tables Exist
 	puts "Check tables and indices"
 	foreach table [dict keys $tables] {
-	set match [ lsearch -nocase $table_exists $table ]
+	set match [ lsearch $table_exists $table ]
 	if { $match == -1 } {
 	error "TPROC-H Schema check failed $dbase schema is missing table $table"
 	} else {

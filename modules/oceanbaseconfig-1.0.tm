@@ -9,6 +9,8 @@ namespace eval oceanbaseconfig {
         }
         if {$mode eq "mysql"} {
             dict set defaults tpcc ob_pass ""
+            dict set defaults tpcc ob_distributed_schema false
+            dict set defaults tpcc ob_partition_count 24
             dict set defaults tpch ob_tpch_pass ""
         }
         dict for {group values} $defaults {

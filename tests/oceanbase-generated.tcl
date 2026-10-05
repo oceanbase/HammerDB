@@ -57,11 +57,11 @@ test order-status-byid {Flat customer rows and empty order dates are handled} -b
     }
 } -result {1,Known,First,M,25,0,,}
 interp delete $mock
-test mysql-after-ob {A MySQL script explicitly resets the runtime database mode} -body {
+test mysql-after-ob {A native MySQL script has no OceanBase runtime dependency} -body {
     dbset db mysql
     diset tpcc mysql_driver test
     loadscript
-    expr {[string first {mysqlcommon::configure MySQL 0} $::_ED(package)] >= 0 && [string first {mysqlcommon::configure OceanBase} $::_ED(package)] < 0}
+    expr {[string first {oceanbasecommon} $::_ED(package)] < 0}
 } -result 1
 # Generate schema scripts without allocating loader threads or connecting to a database.
 rename load_virtual original_load_virtual
@@ -84,6 +84,60 @@ foreach database {mysql ob mysql} label {mysql-before-ob oceanbase mysql-after-o
 }
 rename load_virtual {}
 rename original_load_virtual load_virtual
+
+# Reusing the generator must leave native scripts untouched after OB generation.
+foreach asynchronous {false true} {
+    test runtime-timed-$asynchronous {OB timed counters, labels and session hooks are isolated} -setup {
+        set saved_ob $::configoceanbase
+    } -body {
+        dbset db mysql
+        dbset bm TPROC-C
+        diset tpcc mysql_async_scale $asynchronous
+        loadtimedmysqltpcc
+        set native $::_ED(package)
+        dbset db ob
+        # Exercise the backend with an async fixture; the OB UI does not expose it.
+        dict set ::configoceanbase tpcc ob_async_scale $asynchronous
+        loadtimedobtpcc
+        set ob $::_ED(package)
+        dbset db mysql
+        loadtimedmysqltpcc
+        list [expr {$native eq $::_ED(package)}] [info complete $ob] \
+            [regexp -all {oceanbasecommon::transaction_count} $ob] \
+            [expr {[string first {testresult $nopm $tpm OceanBase} $ob] >= 0}] \
+            [expr {[string first {Com_commit} $ob] < 0}] \
+            [expr {[string first {oceanbasecommon} $native] < 0}]
+    } -cleanup {
+        set ::configoceanbase $saved_ob
+    } -result {1 1 2 1 1 1}
+}
+test runtime-connect {Both synchronous and asynchronous OB connections apply a session timeout} -setup {
+    set mock [interp create]
+    $mock eval [list source [file join [file dirname [file dirname [info script]]] modules oceanbasecommon-1.0.tm]]
+    foreach name {chk_socket ConnectToMySQL ConnectToMySQLAsynch} {
+        $mock eval [generated_proc $name $ob]
+    }
+    $mock eval {
+        set calls {}
+        proc mysqlconnect {args} {return handle}
+        proc mysqluse {args} {}
+        proc puts {args} {}
+        namespace eval mysql {
+            proc autocommit {args} {}
+            proc sel {args} {return {}}
+            proc exec {handle sql} {lappend ::calls $sql}
+        }
+        oceanbasecommon::configure 120
+    }
+} -body {
+    $mock eval {
+        ConnectToMySQL host 2881 null {} root@tenant password tpcc
+        ConnectToMySQLAsynch host 2881 null {} root@tenant password tpcc client false
+        set calls
+    }
+} -cleanup {
+    interp delete $mock
+} -result {{SET SESSION ob_query_timeout = 120000000} {SET SESSION ob_query_timeout = 120000000}}
 
 set failed $::tcltest::numTests(Failed)
 cleanupTests

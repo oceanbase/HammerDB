@@ -26,6 +26,8 @@
             <ob_dbase>tpcc</ob_dbase>
             <ob_storage_engine>innodb</ob_storage_engine>
             <ob_partition>false</ob_partition>
+            <ob_distributed_schema>false</ob_distributed_schema>
+            <ob_partition_count>24</ob_partition_count>
             <ob_prepared>false</ob_prepared>
             <ob_no_stored_procs>false</ob_no_stored_procs>
         </schema>

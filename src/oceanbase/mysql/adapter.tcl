@@ -1,13 +1,15 @@
 # MySQL tenant backend. Oracle-specific options, connections and SQL belong in a separate backend.
+source [file join [file dirname [info script]] tprocc.tcl]
+source [file join [file dirname [info script]] runtime.tcl]
+source [file join [file dirname [info script]] counter.tcl]
 namespace eval oceanbase::mysql {
     proc username {user tenant cluster} {
         foreach part [list $user $tenant $cluster] {
-            if {[regexp {[@#\s]} $part]} {error "Use separate user, tenant and cluster fields without @, # or whitespace"}
+            if {[regexp {[@#:\s]} $part]} {error "Use separate user, tenant and cluster fields without @, #, : or whitespace"}
         }
         if {$user eq "" || $tenant eq ""} {error "OceanBase user and tenant are required"}
-        set login "$user@$tenant"
-        if {$cluster ne ""} {append login "#$cluster"}
-        return $login
+        if {$cluster ne ""} {return "$cluster:$tenant:$user"}
+        return "$user@$tenant"
     }
 
     proc config {config} {
@@ -33,6 +35,19 @@ namespace eval oceanbase::mysql {
             if {[string tolower [dict get $mapped $group mysql_$key]] ne "innodb"} {
                 error "OceanBase MySQL workloads require the innodb-compatible schema"
             }
+        }
+        set distributed [dict get $config tpcc ob_distributed_schema]
+        if {$distributed ni {true false}} {
+            error "OceanBase distributed schema must be true or false"
+        }
+        set partition_count [dict get $config tpcc ob_partition_count]
+        if {![string is integer -strict $partition_count] || $partition_count < 1 || $partition_count > 8192} {
+            error "OceanBase TPROC-C partition count must be an integer from 1 to 8192"
+        }
+        if {$distributed eq "true"} {
+            # The native MySQL option partitions only ORDER_LINE. OceanBase
+            # replaces the full table DDL instead.
+            dict set mapped tpcc mysql_partition false
         }
         # The legacy OceanBase option under MySQL prepares sys settings and uses
         # different DDL. The new category needs only the business tenant login.
@@ -62,16 +77,23 @@ namespace eval oceanbase::mysql {
         if {![dict exists $commands $workload $action]} {error "Unsupported OceanBase MySQL operation: $workload $action"}
         set command [dict get $commands $workload $action]
         global configoceanbase _ED
+        set normalized [::oceanbaseconfig::normalize $configoceanbase]
         with_config $command
         set graphical [info exists ::tk_version]
         if {$graphical} {ed_edit_commit}
         if {[string length $_ED(package)] > 0} {
-            set timeout [dict get $configoceanbase connection ob_query_timeout]
-            set _ED(package) [string map [list {mysqlcommon::configure MySQL 0} [list mysqlcommon::configure OceanBase $timeout]] $_ED(package)]
+            set timeout [dict get $normalized connection ob_query_timeout]
+            set _ED(package) [rewrite_runtime $_ED(package) $timeout]
             if {$workload eq "tpch" && $action in {build test}} {
                 # OceanBase requires abbreviated-month parsing for generated TPROC-H dates.
                 # Keep the shared MySQL generator on its existing full-month parser path.
                 set _ED(package) [string map [list {'%Y-%M-%d'} {'%Y-%b-%d'}] $_ED(package)]
+            }
+            if {$workload eq "tpcc" && [dict get $normalized tpcc ob_distributed_schema] eq "true"} {
+                if {$action eq "build"} {
+                    set _ED(package) [rewrite_distributed_tprocc $_ED(package) [dict get $normalized tpcc ob_partition_count]]
+                }
+                set _ED(package) [rewrite_distributed_tprocc_queries $_ED(package) [dict get $normalized tpcc ob_count_ware]]
             }
             if {$graphical} {
                 .ed_mainFrame.mainwin.textFrame.left.text fastdelete 1.0 end
@@ -101,6 +123,7 @@ namespace eval oceanbase::mysql {
     proc options {group option} {
         global configoceanbase
         variable options
+        set configoceanbase [::oceanbaseconfig::normalize $configoceanbase]
         catch {destroy .oboptions}
         array unset options
         ttk::toplevel .oboptions
@@ -108,7 +131,7 @@ namespace eval oceanbase::mysql {
         wm transient .oboptions .ed_mainFrame
         ttk::notebook .oboptions.tabs
         pack .oboptions.tabs -fill both -expand 1 -padx 8 -pady 8
-        set schema_keys {ob_user ob_pass ob_dbase ob_count_ware ob_num_vu ob_partition ob_storage_engine ob_tpch_user ob_tpch_pass ob_tpch_dbase ob_scale_fact ob_num_tpch_threads ob_tpch_storage_engine}
+        set schema_keys {ob_user ob_pass ob_dbase ob_count_ware ob_num_vu ob_partition ob_distributed_schema ob_partition_count ob_storage_engine ob_tpch_user ob_tpch_pass ob_tpch_dbase ob_scale_fact ob_num_tpch_threads ob_tpch_storage_engine}
         foreach page {connection schema driver} {
             ttk::frame .oboptions.tabs.$page -padding 8
             .oboptions.tabs add .oboptions.tabs.$page -text [string totitle $page]
@@ -144,14 +167,10 @@ namespace eval oceanbase::mysql {
         pack .oboptions.buttons.cancel .oboptions.buttons.ok -side right -padx 5 -pady 5
         pack .oboptions.buttons -fill x
     }
-    proc data_format {workload} {
-        if {$workload ni {tpcc tpch}} {error "Unsupported OceanBase MySQL data workload: $workload"}
-        return mysql
-    }
     proc validate {configuration} {config $configuration}
     proc counter {bm interval masterthread} {
         global configoceanbase
-        with_config tcount_mysql $bm $interval $masterthread OceanBase [dict get $configoceanbase connection ob_query_timeout]
+        with_config tcount_oceanbase_mysql $bm $interval $masterthread [dict get $configoceanbase connection ob_query_timeout]
     }
 
 }
