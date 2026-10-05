@@ -988,7 +988,6 @@ proc chk_socket { host socket } {
 }
 
 proc do_tpcc { host port socket ssl_options count_ware user password db mysql_storage_engine partition history_pk num_vu } {
-    try {
     global mysqlstatus
     set MAXITEMS 100000
     set CUST_PER_DIST 3000
@@ -1019,6 +1018,7 @@ proc do_tpcc { host port socket ssl_options count_ware user password db mysql_st
         set num_vu 1
     }
     if { $threaded eq "SINGLE-THREADED" ||  $threaded eq "MULTI-THREADED" && $myposition eq 1 } {
+        try {
         puts "CREATING [ string toupper $db ] SCHEMA"
         set mysql_handler [ ConnectToMySQL $host $port $socket $ssl_options $user $password ]
         set db_created [ CreateDatabase $mysql_handler $db ]
@@ -1041,50 +1041,28 @@ proc do_tpcc { host port socket ssl_options count_ware user password db mysql_st
         if { $threaded eq "MULTI-THREADED" } {
             tsv::set application load "READY"
             LoadItems $mysql_handler $MAXITEMS
-            puts "Monitoring Workers..."
-            set prevactive 0
-            while 1 {
-                if {[tsv::get application abort]} {error "Schema build aborted after a loader failure"}
-                set idlcnt 0; set lvcnt 0; set dncnt 0;
-                for {set th 2} {$th <= $totalvirtualusers } {incr th} {
-                    switch [tsv::lindex common thrdlst $th] {
-                        idle { incr idlcnt }
-                        active { incr lvcnt }
-                        done { incr dncnt }
-                    }
-                }
-                if { $lvcnt != $prevactive } {
-                    puts "Workers: $lvcnt Active $dncnt Done"
-                }
-                set prevactive $lvcnt
-                if { $dncnt eq [expr  $totalvirtualusers - 1] } { break }
-                after 10000
-            }
+            if {[loader_monitor $totalvirtualusers] eq "ABORT"} { return }
         } else {
             LoadItems $mysql_handler $MAXITEMS
         }
-    }
+    
+        } on error {message options} {
+            if { $threaded eq "MULTI-THREADED" } {
+                tsv::set application load "ERROR"
+            }
+            return -options $options $message
+        }
+}
     if { $threaded eq "SINGLE-THREADED" ||  $threaded eq "MULTI-THREADED" && $myposition != 1 } {
+        try {
         if { $threaded eq "MULTI-THREADED" } {
             puts "Waiting for Monitor Thread..."
-            set mtcnt 0
-            while 1 {
-                if { [ tsv::get application abort ] } { return }
-                if { [ tsv::exists application load ] } {
-                    incr mtcnt
-                    if { [ tsv::get application load ] eq "READY" } { break }
-                    if { $mtcnt eq 48 } {
-                        puts "Monitor failed to notify ready state"
-                        return
-                    }
-                }
-                after 5000
-            }
+            if {[loader_wait_ready 48 5000] eq "ABORT"} { return }
             set mysql_handler [ ConnectToMySQL $host $port $socket $ssl_options $user $password ]
             mysqluse $mysql_handler $db
             set remb [ lassign [ findchunk $num_vu $count_ware $myposition ] chunk mystart myend ]
             puts "Loading $chunk Warehouses start:$mystart end:$myend"
-            tsv::lreplace common thrdlst $myposition $myposition active
+            loader_set_state $myposition active
         } else {
             set mystart 1
             set myend $count_ware
@@ -1096,20 +1074,22 @@ proc do_tpcc { host port socket ssl_options count_ware user password db mysql_st
         puts "End:[ clock format [ clock seconds ] ]"
         mysql::commit $mysql_handler
         if { $threaded eq "MULTI-THREADED" } {
-            tsv::lreplace common thrdlst $myposition $myposition done
+            loader_set_state $myposition done
         }
-    }
+    
+        } on error {message options} {
+            if { $threaded eq "MULTI-THREADED" } {
+                loader_set_state $myposition error
+            }
+            return -options $options $message
+        }
+}
     if { $threaded eq "SINGLE-THREADED" || $threaded eq "MULTI-THREADED" && $myposition eq 1 } {
         CreateStoredProcs $mysql_handler
         GatherStatistics $mysql_handler
         puts "[ string toupper $db ] SCHEMA COMPLETE"
         mysqlclose $mysql_handler
         return
-    }
-    } on error {message options} {
-        # Notify the monitor and workers without losing the original error.
-        tsv::set application abort 1
-        return -options $options $message
     }
 }
 }
@@ -1341,7 +1321,7 @@ mysqlclose $mmysql_handler
             set syncdrvi(7b) [.ed_mainFrame.mainwin.textFrame.left.text search -backwards {set mmysql_handler [ ConnectToMySQL $host $port $socket $ssl_options $user $password $db ]} end ]
             .ed_mainFrame.mainwin.textFrame.left.text fastdelete $syncdrvi(7a) $syncdrvi(7b)+1l
             #Replace individual lines for Asynch
-            foreach line {{set mysql_handler [ ConnectToMySQLAsynch $host $port $socket $ssl_options $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set mysql_handler$id [ ConnectToMySQL $1 $2 $3 $4 $5 $6 $7 ] ]} {#puts "sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} asynchline {{set mmysql_handler [ ConnectToMySQLAsynch $host $port $socket $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set mysql_handler$id [ ConnectToMySQLAsynch $1 $2 $3 $4 $5 $6 $clientname $async_verbose ] ]} {#puts "$clientname:sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} {
+            foreach line {{set mysql_handler [ ConnectToMySQLAsynch $host $port $socket $ssl_options $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set mysql_handler$id [ ConnectToMySQL $1 $2 $3 $4 $5 $6 $7 ] ]} {#puts "sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} asynchline {{set mmysql_handler [ ConnectToMySQLAsynch $host $port $socket $ssl_options $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set mysql_handler$id [ ConnectToMySQLAsynch $1 $2 $3 $4 $5 $6 $7 $clientname $async_verbose ] ]} {#puts "$clientname:sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} {
                 set index [.ed_mainFrame.mainwin.textFrame.left.text search -backwards $line end ]
                 .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index "$index lineend + 1 char"
                 .ed_mainFrame.mainwin.textFrame.left.text fastinsert $index "$asynchline \n"
@@ -2090,6 +2070,12 @@ proc ConnectToMySQL { host port socket ssl_options user password db } {
 }
 
 proc CheckDBVersion { mysql_handler } {
+           if {![catch {lassign [ lindex [ mysql::sel $mysql_handler "select version(), @@version_comment" -list ] 0 ] version comment}]} {
+                if { ![ string match -nocase "*Percona Server*" $comment ] } {
+                    set version [ lindex [ split $version - ] 0 ]
+                }
+                return "DBVersion:$version VersionComment:$comment"
+           }
            if {[catch {set dbversion [ lindex [ split [ list [ mysql::sel $mysql_handler "select version()" -list ] ] - ] 0 ]}]} {
                 set dbversion "DBVersion:NULL"
            } else {
@@ -2520,6 +2506,12 @@ proc ConnectToMySQLAsynch { host port socket ssl_options user password db client
 }
 
 proc CheckDBVersion { mysql_handler } {
+           if {![catch {lassign [ lindex [ mysql::sel $mysql_handler "select version(), @@version_comment" -list ] 0 ] version comment}]} {
+                if { ![ string match -nocase "*Percona Server*" $comment ] } {
+                    set version [ lindex [ split $version - ] 0 ]
+                }
+                return "DBVersion:$version VersionComment:$comment"
+           }
            if {[catch {set dbversion [ lindex [ split [ list [ mysql::sel $mysql_handler "select version()" -list ] ] - ] 0 ]}]} {
                 set dbversion "DBVersion:NULL"
            } else {

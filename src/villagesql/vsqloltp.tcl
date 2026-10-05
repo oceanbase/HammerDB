@@ -111,66 +111,65 @@ proc CreateStoredProcs { vsql_handler } {
         IF 100001 MEMBER OF (JSON_EXTRACT(lines_json, '$[*].i')) THEN
             SELECT i_id INTO x FROM item WHERE i_id = 100001;
         END IF;
-        -- bulk INSERT order_line, static per-district branch (no dynamic SQL).
-        -- Each branch is identical except the literal s_dist_NN column.
-        IF no_d_id = 1 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_01
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 2 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_02
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 3 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_03
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 4 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_04
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 5 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_05
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 6 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_06
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 7 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_07
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 8 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_08
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSEIF no_d_id = 9 THEN
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_09
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        ELSE
-            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
-            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,(ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)),s.s_dist_10
-            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
-            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
-        END IF;
-        -- bulk UPDATE stock (+91 restock rule). Reached only when all items were
-        -- valid (the invalid-item case rolled back above), so an inner JOIN is
-        -- safe here and every order line has a matching stock row.
+        -- Update stock before the order_line INSERT ... SELECT reads it to avoid
+        -- shared-to-exclusive lock upgrades when concurrent New Orders share stock rows.
         UPDATE stock s
         JOIN JSON_TABLE(lines_json,'$[*]' COLUMNS(i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
           ON s.s_i_id=ol.i AND s.s_w_id=ol.w
         SET s.s_quantity = CASE WHEN s.s_quantity >= ol.q+10 THEN s.s_quantity-ol.q ELSE s.s_quantity-ol.q+91 END;
+        -- bulk INSERT order_line, static per-district branch (no dynamic SQL).
+        -- Each branch is identical except the literal s_dist_NN column.
+        IF no_d_id = 1 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_01
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 2 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_02
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 3 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_03
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 4 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_04
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 5 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_05
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 6 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_06
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 7 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_07
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 8 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_08
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 9 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_09
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSE
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_10
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        END IF;
         INSERT INTO orders (o_id, o_d_id, o_w_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) VALUES (o_id, no_d_id, no_w_id, no_c_id, timestamp, no_o_ol_cnt, no_o_all_local);
         INSERT INTO new_order (no_o_id, no_d_id, no_w_id) VALUES (o_id, no_d_id, no_w_id);
         COMMIT;
@@ -1033,6 +1032,7 @@ proc do_tpcc { host port socket ssl_options count_ware user password db vsql_sto
         set num_vu 1
     }
     if { $threaded eq "SINGLE-THREADED" ||  $threaded eq "MULTI-THREADED" && $myposition eq 1 } {
+        try {
         puts "CREATING [ string toupper $db ] SCHEMA"
         set vsql_handler [ ConnectToVillageSQL $host $port $socket $ssl_options $user $password ]
         set db_created [ CreateDatabase $vsql_handler $db ]
@@ -1055,49 +1055,28 @@ proc do_tpcc { host port socket ssl_options count_ware user password db vsql_sto
         if { $threaded eq "MULTI-THREADED" } {
             tsv::set application load "READY"
             LoadItems $vsql_handler $MAXITEMS
-            puts "Monitoring Workers..."
-            set prevactive 0
-            while 1 {
-                set idlcnt 0; set lvcnt 0; set dncnt 0;
-                for {set th 2} {$th <= $totalvirtualusers } {incr th} {
-                    switch [tsv::lindex common thrdlst $th] {
-                        idle { incr idlcnt }
-                        active { incr lvcnt }
-                        done { incr dncnt }
-                    }
-                }
-                if { $lvcnt != $prevactive } {
-                    puts "Workers: $lvcnt Active $dncnt Done"
-                }
-                set prevactive $lvcnt
-                if { $dncnt eq [expr  $totalvirtualusers - 1] } { break }
-                after 10000
-            }
+            if {[loader_monitor $totalvirtualusers] eq "ABORT"} { return }
         } else {
             LoadItems $vsql_handler $MAXITEMS
         }
-    }
+    
+        } on error {message options} {
+            if { $threaded eq "MULTI-THREADED" } {
+                tsv::set application load "ERROR"
+            }
+            return -options $options $message
+        }
+}
     if { $threaded eq "SINGLE-THREADED" ||  $threaded eq "MULTI-THREADED" && $myposition != 1 } {
+        try {
         if { $threaded eq "MULTI-THREADED" } {
             puts "Waiting for Monitor Thread..."
-            set mtcnt 0
-            while 1 {
-                if { [ tsv::get application abort ] } { return }
-                if { [ tsv::exists application load ] } {
-                    incr mtcnt
-                    if { [ tsv::get application load ] eq "READY" } { break }
-                    if { $mtcnt eq 48 } {
-                        puts "Monitor failed to notify ready state"
-                        return
-                    }
-                }
-                after 5000
-            }
+            if {[loader_wait_ready 48 5000] eq "ABORT"} { return }
             set vsql_handler [ ConnectToVillageSQL $host $port $socket $ssl_options $user $password ]
             mysqluse $vsql_handler $db
             set remb [ lassign [ findchunk $num_vu $count_ware $myposition ] chunk mystart myend ]
             puts "Loading $chunk Warehouses start:$mystart end:$myend"
-            tsv::lreplace common thrdlst $myposition $myposition active
+            loader_set_state $myposition active
         } else {
             set mystart 1
             set myend $count_ware
@@ -1109,9 +1088,16 @@ proc do_tpcc { host port socket ssl_options count_ware user password db vsql_sto
         puts "End:[ clock format [ clock seconds ] ]"
         mysql::commit $vsql_handler
         if { $threaded eq "MULTI-THREADED" } {
-            tsv::lreplace common thrdlst $myposition $myposition done
+            loader_set_state $myposition done
         }
-    }
+    
+        } on error {message options} {
+            if { $threaded eq "MULTI-THREADED" } {
+                loader_set_state $myposition error
+            }
+            return -options $options $message
+        }
+}
     if { $threaded eq "SINGLE-THREADED" || $threaded eq "MULTI-THREADED" && $myposition eq 1 } {
         CreateStoredProcs $vsql_handler
         GatherStatistics $vsql_handler
@@ -1349,7 +1335,7 @@ mysqlclose $mvsql_handler
             set syncdrvi(7b) [.ed_mainFrame.mainwin.textFrame.left.text search -backwards {set mvsql_handler [ ConnectToVillageSQL $host $port $socket $ssl_options $user $password $db ]} end ]
             .ed_mainFrame.mainwin.textFrame.left.text fastdelete $syncdrvi(7a) $syncdrvi(7b)+1l
             #Replace individual lines for Asynch
-            foreach line {{set vsql_handler [ ConnectToVillageSQLAsynch $host $port $socket $ssl_options $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set vsql_handler$id [ ConnectToVillageSQL $1 $2 $3 $4 $5 $6 $7 ] ]} {#puts "sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} asynchline {{set mvsql_handler [ ConnectToVillageSQLAsynch $host $port $socket $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set vsql_handler$id [ ConnectToVillageSQLAsynch $1 $2 $3 $4 $5 $6 $clientname $async_verbose ] ]} {#puts "$clientname:sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} {
+            foreach line {{set vsql_handler [ ConnectToVillageSQLAsynch $host $port $socket $ssl_options $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set vsql_handler$id [ ConnectToVillageSQL $1 $2 $3 $4 $5 $6 $7 ] ]} {#puts "sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} asynchline {{set mvsql_handler [ ConnectToVillageSQLAsynch $host $port $socket $ssl_options $user $password $db $clientname $async_verbose ]} {dict set connlist $id [ set vsql_handler$id [ ConnectToVillageSQLAsynch $1 $2 $3 $4 $5 $6 $7 $clientname $async_verbose ] ]} {#puts "$clientname:sproc_cur:$st connections:[ set $cslist ] cursors:[set $cursor_list] number of cursors:[set $len] execs:[set $cnt]"}} {
                 set index [.ed_mainFrame.mainwin.textFrame.left.text search -backwards $line end ]
                 .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index "$index lineend + 1 char"
                 .ed_mainFrame.mainwin.textFrame.left.text fastinsert $index "$asynchline \n"
@@ -1550,10 +1536,7 @@ proc insert_vsql_no_stored_procs { testtype timedtype } {
     if { $byname } {
       set namecnt [ mysql::sel $vsql_handler "SELECT count(c_id) FROM customer WHERE c_last = '$name' AND c_d_id = $p_c_d_id AND c_w_id = $p_c_w_id" -flatlist ]
       set cust_list [ mysql::sel $vsql_handler "SELECT c_first, c_middle, c_id, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = $p_c_w_id AND c_d_id = $p_c_d_id AND c_last = '$name' ORDER BY c_first" -list ]
-      if { [ expr {$namecnt % 2} ] eq 1 } {
-        set $namecnt [ expr {$namecnt + 1} ]
-      }
-      set cust_id_to_query [ lindex $cust_list [ expr {$namecnt / 2} ] ]
+      set cust_id_to_query [ lindex $cust_list [ expr {($namecnt - 1) / 2} ] ]
       lassign $cust_id_to_query p_c_first p_c_middle p_c_id p_c_street_1 p_c_street_2 p_c_city p_c_state p_c_zip p_c_phone p_c_credit p_c_credit_lim p_c_discount p_c_balance p_c_since
       set p_c_last $name
     } else {
@@ -1598,14 +1581,18 @@ proc insert_vsql_no_stored_procs { testtype timedtype } {
       }
       set cust_list [ mysql::sel $vsql_handler "SELECT c_balance, c_first, c_middle, c_id FROM customer WHERE c_last = '$name' AND c_d_id = $d_id AND c_w_id = $w_id ORDER BY c_first" -list ]
       set cust_id_to_query [ lindex $cust_list [ expr ($namecnt/2)-1 ] ]
+      lassign $cust_id_to_query os_c_balance os_c_first os_c_middle c_id
+      set os_c_last $name
     } else {
-      set cust_id_to_query [ mysql::sel $vsql_handler "SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_id = $c_id AND c_d_id = $d_id AND c_w_id = $w_id" -list ]
+      set cust_id_to_query [ mysql::sel $vsql_handler "SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_id = $c_id AND c_d_id = $d_id AND c_w_id = $w_id" -flatlist ]
+      lassign $cust_id_to_query os_c_balance os_c_first os_c_middle os_c_last
     }
-    lassign $cust_id_to_query os_c_balance os_c_first os_c_middle os_c_last
     set cust_orders [ mysql::sel $vsql_handler "SELECT o_id, o_carrier_id, o_entry_d FROM (SELECT o_id, o_carrier_id, o_entry_d FROM orders where o_d_id = $d_id AND o_w_id = $w_id and o_c_id = $c_id ORDER BY o_id DESC) AS sb LIMIT 1" -flatlist ]
     if { [ llength $cust_orders ] eq 0 } {
       set no_order_status "No orders for customer"
       set o_id 0
+      set o_entry_d ""
+      set o_carrier_id ""
     } else {
       lassign $cust_orders o_id o_carrier_id o_entry_d
     }
@@ -1671,15 +1658,10 @@ proc insert_vsql_no_stored_procs { testtype timedtype } {
 
         set index_sp_1 [.ed_mainFrame.mainwin.textFrame.left.text search -forwards "\#NEW ORDER" 1.0 ]
         set index_sp_2 [.ed_mainFrame.mainwin.textFrame.left.text search -backwards "proc prep_statement" end ]
-        #End of run loop is previous line
-	#CLI indexes are characters in the string and integers GUI indexes are based on lines and position. Move back 1 line
-	if { [ string is entier $index_sp_2 ] } {
-       set index_sp_2 [ expr $index_sp_2 - 10 ]
-       	} else {
-       set index_sp_2 [ expr $index_sp_2 - 1 ]
-	}
-        #Delete stored procedures
-        .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index_sp_1 $index_sp_2+1l
+        # Remove up to the next procedure, including the old closing braces.
+        # CLI offsets are inclusive; Tk text indices use an exclusive end.
+        if {[string is entier -strict $index_sp_2]} {incr index_sp_2 -1}
+        .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index_sp_1 $index_sp_2
         #Insert no stored procedures version
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert $index_sp_1 "$neword_no_sp \n\n $pay_no_sp \n\n $ostat_no_sp \n\n $deliv_no_sp \n\n $stock_no_sp \n\n"
 }

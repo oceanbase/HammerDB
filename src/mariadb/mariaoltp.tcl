@@ -59,6 +59,22 @@ proc CreateStoredProcs { maria_handler } {
         set update_returning true
     }
     catch { mariaexec $maria_handler "DROP PROCEDURE IF EXISTS `HDB_UPDATE_RETURNING_TEST`" }
+    #JSON_TABLE is available from MariaDB 10.6, use set based New Order if supported
+    set json_table_test {
+        CREATE PROCEDURE `HDB_JSON_TABLE_TEST` ()
+        BEGIN
+        DECLARE test_cnt INTEGER;
+        SELECT COUNT(jt.i) INTO test_cnt
+        FROM JSON_TABLE(JSON_ARRAY_APPEND(JSON_ARRAY(), '$', JSON_OBJECT('i', 1)), '$[*]' COLUMNS(i INT PATH '$.i')) AS jt;
+        END
+    }
+    catch { mariaexec $maria_handler "DROP PROCEDURE IF EXISTS `HDB_JSON_TABLE_TEST`" }
+    if { [ catch { mariaexec $maria_handler $json_table_test } ] } {
+        set json_table false
+    } else {
+        set json_table true
+    }
+    catch { mariaexec $maria_handler "DROP PROCEDURE IF EXISTS `HDB_JSON_TABLE_TEST`" }
     set sql(1) {
         CREATE PROCEDURE `NEWORD` (
         no_w_id    INTEGER,
@@ -141,7 +157,7 @@ proc CreateStoredProcs { maria_handler } {
         SELECT s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10
         INTO no_s_quantity, no_s_data, no_s_dist_01, no_s_dist_02, no_s_dist_03, no_s_dist_04, no_s_dist_05, no_s_dist_06, no_s_dist_07, no_s_dist_08, no_s_dist_09, no_s_dist_10
         FROM stock WHERE s_i_id = no_ol_i_id AND s_w_id = no_ol_supply_w_id;
-        IF ( no_s_quantity > no_ol_quantity )
+        IF ( no_s_quantity >= no_ol_quantity + 10 )
         THEN
         SET no_s_quantity = ( no_s_quantity - no_ol_quantity );
         ELSE
@@ -182,6 +198,155 @@ proc CreateStoredProcs { maria_handler } {
         COMMIT;
         END 
     }
+    if { $json_table } {
+        #Set based New Order taken from the VillageSQL NEWORD (src/villagesql/vsqloltp.tcl)
+        #MEMBER OF is not available in MariaDB and is replaced with JSON_CONTAINS
+    set sql(1) { CREATE PROCEDURE `NEWORD` (
+        no_w_id		INTEGER,
+        no_max_w_id		INTEGER,
+        no_d_id		INTEGER,
+        no_c_id		INTEGER,
+        no_o_ol_cnt		INTEGER,
+        OUT no_c_discount 	DECIMAL(4,4),
+        OUT no_c_last 		VARCHAR(16),
+        OUT no_c_credit 		VARCHAR(2),
+        OUT no_d_tax 		DECIMAL(4,4),
+        OUT no_w_tax 		DECIMAL(4,4),
+        INOUT no_d_next_o_id 	INTEGER,
+        IN timestamp 		DATETIME
+        )
+        BEGIN
+        DECLARE no_ol_supply_w_id	INTEGER;
+        DECLARE no_ol_i_id		INTEGER;
+        DECLARE no_ol_quantity		INTEGER;
+        DECLARE no_o_all_local		INTEGER;
+        DECLARE o_id			INTEGER;
+        DECLARE rbk			INTEGER;
+        DECLARE x			INTEGER;
+        DECLARE loop_counter		INT;
+        DECLARE lines_json		JSON;
+        DECLARE `Constraint Violation` CONDITION FOR SQLSTATE '23000';
+        DECLARE EXIT HANDLER FOR `Constraint Violation` ROLLBACK;
+        DECLARE EXIT HANDLER FOR NOT FOUND ROLLBACK;
+        SET no_o_all_local = 1;
+        SELECT c_discount, c_last, c_credit, w_tax
+        INTO no_c_discount, no_c_last, no_c_credit, no_w_tax
+        FROM customer, warehouse
+        WHERE warehouse.w_id = no_w_id AND customer.c_w_id = no_w_id AND
+        customer.c_d_id = no_d_id AND customer.c_id = no_c_id;
+        START TRANSACTION;
+        SELECT d_next_o_id, d_tax INTO no_d_next_o_id, no_d_tax
+        FROM district
+        WHERE d_id = no_d_id AND d_w_id = no_w_id FOR UPDATE;
+        UPDATE district SET d_next_o_id = d_next_o_id + 1 WHERE d_id = no_d_id AND d_w_id = no_w_id;
+        SET o_id = no_d_next_o_id;
+        SET rbk = FLOOR(1 + (RAND() * 99));
+        -- build order-line collection as JSON (no SQL in loop)
+        SET lines_json = JSON_ARRAY();
+        SET loop_counter = 1;
+        WHILE loop_counter <= no_o_ol_cnt DO
+            IF ((loop_counter = no_o_ol_cnt) AND (rbk = 1)) THEN
+                SET no_ol_i_id = 100001;
+            ELSE
+                SET no_ol_i_id = FLOOR(1 + (RAND() * 100000));
+            END IF;
+            SET x = FLOOR(1 + (RAND() * 100));
+            IF ( x > 1 ) THEN
+                SET no_ol_supply_w_id = no_w_id;
+            ELSE
+                SET no_ol_supply_w_id = no_w_id;
+                SET no_o_all_local = 0;
+                WHILE ((no_ol_supply_w_id = no_w_id) AND (no_max_w_id != 1)) DO
+                    SET no_ol_supply_w_id = FLOOR(1 + (RAND() * no_max_w_id));
+                END WHILE;
+            END IF;
+            SET no_ol_quantity = FLOOR(1 + (RAND() * 10));
+            SET lines_json = JSON_ARRAY_APPEND(lines_json, '$',
+                JSON_OBJECT('n', loop_counter, 'i', no_ol_i_id,
+                            'w', no_ol_supply_w_id, 'q', no_ol_quantity));
+            SET loop_counter = loop_counter + 1;
+        END WHILE;
+        -- Preserve the TPC-C 2.4.2.3 forced rollback: on the ~1% of transactions
+        -- that generate the invalid item (100001, the only value the loop above
+        -- can emit for a bad line), the whole New Order must roll back. Test the
+        -- built JSON directly (JSON_CONTAINS is an in-memory check, no JSON_TABLE
+        -- expansion or item-table join); if the poison item is present, force the
+        -- NOT FOUND EXIT HANDLER declared above, which rolls back, exactly as the
+        -- row-by-row baseline does.
+        -- MariaDB JSON_OBJECT writes an integer variable as a JSON string, so match both forms
+        IF JSON_CONTAINS(JSON_EXTRACT(lines_json, '$[*].i'), '"100001"') OR JSON_CONTAINS(JSON_EXTRACT(lines_json, '$[*].i'), '100001') THEN
+            SELECT i_id INTO x FROM item WHERE i_id = 100001;
+        END IF;
+        -- Update stock before the order_line INSERT ... SELECT reads it: INSERT ... SELECT takes
+        -- shared locks on the stock rows it reads, and upgrading them to exclusive locks in a
+        -- following UPDATE deadlocks two New Orders that share a stock row.
+        -- bulk UPDATE stock (+91 restock rule). Reached only when all items were
+        -- valid (the invalid-item case rolled back above), so an inner JOIN is
+        -- safe here and every order line has a matching stock row.
+        UPDATE stock s
+        JOIN JSON_TABLE(lines_json,'$[*]' COLUMNS(i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+          ON s.s_i_id=ol.i AND s.s_w_id=ol.w
+        SET s.s_quantity = CASE WHEN s.s_quantity >= ol.q+10 THEN s.s_quantity-ol.q ELSE s.s_quantity-ol.q+91 END;
+        -- round ol_amount to DECIMAL(6,2) before it is stored in the INT column, as the row by row
+        -- NEWORD does through its DECIMAL(6,2) variable, so amounts match the baseline exactly
+        -- bulk INSERT order_line, static per-district branch (no dynamic SQL).
+        -- Each branch is identical except the literal s_dist_NN column.
+        IF no_d_id = 1 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_01
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 2 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_02
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 3 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_03
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 4 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_04
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 5 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_05
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 6 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_06
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 7 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_07
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 8 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_08
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSEIF no_d_id = 9 THEN
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_09
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        ELSE
+            INSERT INTO order_line (ol_o_id,ol_d_id,ol_w_id,ol_number,ol_i_id,ol_supply_w_id,ol_quantity,ol_amount,ol_dist_info)
+            SELECT o_id,no_d_id,no_w_id,ol.n,ol.i,ol.w,ol.q,CAST((ol.q*i.i_price*(1+no_w_tax+no_d_tax)*(1-no_c_discount)) AS DECIMAL(6,2)),s.s_dist_10
+            FROM JSON_TABLE(lines_json,'$[*]' COLUMNS(n INT PATH '$.n',i INT PATH '$.i',w INT PATH '$.w',q INT PATH '$.q')) ol
+            LEFT JOIN item i ON i.i_id=ol.i LEFT JOIN stock s ON s.s_i_id=ol.i AND s.s_w_id=ol.w;
+        END IF;
+        INSERT INTO orders (o_id, o_d_id, o_w_id, o_c_id, o_entry_d, o_ol_cnt, o_all_local) VALUES (o_id, no_d_id, no_w_id, no_c_id, timestamp, no_o_ol_cnt, no_o_all_local);
+        INSERT INTO new_order (no_o_id, no_d_id, no_w_id) VALUES (o_id, no_d_id, no_w_id);
+        COMMIT;
+    END }
+    }
     if { $update_returning } {
         set sql(1) [ string map [ list \
             {        SELECT d_next_o_id, d_tax INTO no_d_next_o_id, no_d_tax
@@ -194,7 +359,7 @@ proc CreateStoredProcs { maria_handler } {
             {        SELECT s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10
         INTO no_s_quantity, no_s_data, no_s_dist_01, no_s_dist_02, no_s_dist_03, no_s_dist_04, no_s_dist_05, no_s_dist_06, no_s_dist_07, no_s_dist_08, no_s_dist_09, no_s_dist_10
         FROM stock WHERE s_i_id = no_ol_i_id AND s_w_id = no_ol_supply_w_id;
-        IF ( no_s_quantity > no_ol_quantity )
+        IF ( no_s_quantity >= no_ol_quantity + 10 )
         THEN
         SET no_s_quantity = ( no_s_quantity - no_ol_quantity );
         ELSE
@@ -205,7 +370,7 @@ proc CreateStoredProcs { maria_handler } {
         AND s_w_id = no_ol_supply_w_id;} \
             {        UPDATE stock
         SET s_quantity = CASE
-        WHEN s_quantity > no_ol_quantity
+        WHEN s_quantity >= no_ol_quantity + 10
         THEN s_quantity - no_ol_quantity
         ELSE s_quantity - no_ol_quantity + 91
         END
@@ -258,6 +423,61 @@ proc CreateStoredProcs { maria_handler } {
         END WHILE;
         COMMIT;
         END 
+    }
+    if { $json_table } {
+        #Set based Delivery modelled on the PostgreSQL array_agg/UNNEST and Oracle FORALL versions
+        #JSON_ARRAYAGG collects the oldest new order in each district and the customer totals
+        #JSON_TABLE exposes the JSON arrays as rows for the set based deletes and updates
+        set sql(2) {
+        CREATE PROCEDURE `DELIVERY`(
+        d_w_id      INTEGER,
+        d_o_carrier_id    INTEGER,
+        IN timestamp     DATETIME
+        )
+        BEGIN
+        DECLARE oldest_json  JSON;
+        DECLARE deliver_json  JSON;
+        DECLARE customer_json  JSON;
+        DECLARE `Constraint Violation` CONDITION FOR SQLSTATE '23000';
+        DECLARE EXIT HANDLER FOR `Constraint Violation` ROLLBACK;
+        START TRANSACTION;
+        -- oldest undelivered order in each of the 10 districts, one index lookup per district
+        SELECT JSON_ARRAYAGG(JSON_OBJECT('d', dist.d, 'o',
+        (SELECT no_o_id FROM new_order WHERE no_w_id = d_w_id AND no_d_id = dist.d ORDER BY no_o_id LIMIT 1)))
+        INTO oldest_json
+        FROM JSON_TABLE('[1,2,3,4,5,6,7,8,9,10]', '$[*]' COLUMNS(d INT PATH '$')) AS dist;
+        -- lock the orders to deliver, an order delivered concurrently is no longer present
+        SELECT JSON_ARRAYAGG(JSON_OBJECT('d', new_order.no_d_id, 'o', new_order.no_o_id))
+        INTO deliver_json
+        FROM JSON_TABLE(oldest_json, '$[*]' COLUMNS(d INT PATH '$.d', o INT PATH '$.o')) AS ids
+        JOIN new_order ON new_order.no_w_id = d_w_id AND new_order.no_d_id = ids.d AND new_order.no_o_id = ids.o
+        FOR UPDATE;
+        DELETE new_order FROM new_order
+        JOIN JSON_TABLE(deliver_json, '$[*]' COLUMNS(d INT PATH '$.d', o INT PATH '$.o')) AS ids
+        ON new_order.no_w_id = d_w_id AND new_order.no_d_id = ids.d AND new_order.no_o_id = ids.o;
+        UPDATE orders
+        JOIN JSON_TABLE(deliver_json, '$[*]' COLUMNS(d INT PATH '$.d', o INT PATH '$.o')) AS ids
+        ON orders.o_w_id = d_w_id AND orders.o_d_id = ids.d AND orders.o_id = ids.o
+        SET orders.o_carrier_id = d_o_carrier_id;
+        UPDATE order_line
+        JOIN JSON_TABLE(deliver_json, '$[*]' COLUMNS(d INT PATH '$.d', o INT PATH '$.o')) AS ids
+        ON order_line.ol_w_id = d_w_id AND order_line.ol_d_id = ids.d AND order_line.ol_o_id = ids.o
+        SET order_line.ol_delivery_d = timestamp;
+        -- total amount per delivered order for each customer
+        SELECT JSON_ARRAYAGG(JSON_OBJECT('d', sums.d, 'c', sums.c, 'a', sums.a))
+        INTO customer_json
+        FROM (SELECT ids.d, orders.o_c_id AS c, SUM(order_line.ol_amount) AS a
+        FROM JSON_TABLE(deliver_json, '$[*]' COLUMNS(d INT PATH '$.d', o INT PATH '$.o')) AS ids
+        JOIN orders ON orders.o_w_id = d_w_id AND orders.o_d_id = ids.d AND orders.o_id = ids.o
+        JOIN order_line ON order_line.ol_w_id = d_w_id AND order_line.ol_d_id = ids.d AND order_line.ol_o_id = ids.o
+        GROUP BY ids.d, ids.o, orders.o_c_id) AS sums;
+        UPDATE customer
+        JOIN JSON_TABLE(customer_json, '$[*]' COLUMNS(d INT PATH '$.d', c INT PATH '$.c', a DECIMAL(12,2) PATH '$.a')) AS ids
+        ON customer.c_w_id = d_w_id AND customer.c_d_id = ids.d AND customer.c_id = ids.c
+        SET customer.c_balance = customer.c_balance + ids.a;
+        COMMIT;
+        END 
+        }
     }
     set sql(3) { 
         CREATE PROCEDURE `PAYMENT` (
@@ -1084,6 +1304,7 @@ proc do_tpcc { host port socket ssl_options count_ware user password db maria_st
         set num_vu 1
     }
     if { $threaded eq "SINGLE-THREADED" ||  $threaded eq "MULTI-THREADED" && $myposition eq 1 } {
+        try {
         puts "CREATING [ string toupper $db ] SCHEMA"
         set maria_handler [ ConnectToMaria $host $port $socket $ssl_options $user $password ]
         set db_created [ CreateDatabase $maria_handler $db ]
@@ -1106,49 +1327,28 @@ proc do_tpcc { host port socket ssl_options count_ware user password db maria_st
         if { $threaded eq "MULTI-THREADED" } {
             tsv::set application load "READY"
             LoadItems $maria_handler $MAXITEMS
-            puts "Monitoring Workers..."
-            set prevactive 0
-            while 1 {
-                set idlcnt 0; set lvcnt 0; set dncnt 0;
-                for {set th 2} {$th <= $totalvirtualusers } {incr th} {
-                    switch [tsv::lindex common thrdlst $th] {
-                        idle { incr idlcnt }
-                        active { incr lvcnt }
-                        done { incr dncnt }
-                    }
-                }
-                if { $lvcnt != $prevactive } {
-                    puts "Workers: $lvcnt Active $dncnt Done"
-                }
-                set prevactive $lvcnt
-                if { $dncnt eq [expr  $totalvirtualusers - 1] } { break }
-                after 10000
-            }
+            if {[loader_monitor $totalvirtualusers] eq "ABORT"} { return }
         } else {
             LoadItems $maria_handler $MAXITEMS
         }
-    }
+    
+        } on error {message options} {
+            if { $threaded eq "MULTI-THREADED" } {
+                tsv::set application load "ERROR"
+            }
+            return -options $options $message
+        }
+}
     if { $threaded eq "SINGLE-THREADED" || $threaded eq "MULTI-THREADED" && $myposition != 1 } {
+        try {
         if { $threaded eq "MULTI-THREADED" } {
             puts "Waiting for Monitor Thread..."
-            set mtcnt 0
-            while 1 {
-                if { [ tsv::get application abort ] } { return }
-                if { [ tsv::exists application load ] } {
-                    incr mtcnt
-                    if { [ tsv::get application load ] eq "READY" } { break }
-                    if { $mtcnt eq 48 } {
-                        puts "Monitor failed to notify ready state"
-                        return
-                    }
-                }
-                after 5000
-            }
+            if {[loader_wait_ready 48 5000] eq "ABORT"} { return }
             set maria_handler [ ConnectToMaria $host $port $socket $ssl_options $user $password ]
             mariause $maria_handler $db
             set remb [ lassign [ findchunk $num_vu $count_ware $myposition ] chunk mystart myend ]
             puts "Loading $chunk Warehouses start:$mystart end:$myend"
-            tsv::lreplace common thrdlst $myposition $myposition active
+            loader_set_state $myposition active
         } else {
             set mystart 1
             set myend $count_ware
@@ -1160,9 +1360,16 @@ proc do_tpcc { host port socket ssl_options count_ware user password db maria_st
         puts "End:[ clock format [ clock seconds ] ]"
         maria::commit $maria_handler
         if { $threaded eq "MULTI-THREADED" } {
-            tsv::lreplace common thrdlst $myposition $myposition done
+            loader_set_state $myposition done
         }
-    }
+    
+        } on error {message options} {
+            if { $threaded eq "MULTI-THREADED" } {
+                loader_set_state $myposition error
+            }
+            return -options $options $message
+        }
+}
     if { $threaded eq "SINGLE-THREADED" || $threaded eq "MULTI-THREADED" && $myposition eq 1 } {
         CreateStoredProcs $maria_handler
         GatherStatistics $maria_handler
@@ -1530,7 +1737,7 @@ proc insert_maria_no_stored_procs { testtype timedtype } {
       set quantity_data_dist [ maria::sel $maria_handler "SELECT s_quantity, s_data, s_dist_01, s_dist_02, s_dist_03, s_dist_04, s_dist_05, s_dist_06, s_dist_07, s_dist_08, s_dist_09, s_dist_10 FROM stock WHERE s_i_id = $no_ol_i_id AND s_w_id = $no_ol_supply_w_id" -flatlist ]
       set no_i_price [ lindex $price_name_data 0 ]
       set no_s_quantity [ lindex $quantity_data_dist 0 ]
-      if { $no_s_quantity > $no_ol_quantity } {
+      if { $no_s_quantity >= [ expr {$no_ol_quantity + 10} ] } {
         set no_s_quantity [ expr {$no_s_quantity - $no_ol_quantity} ]
       } else {
         set no_s_quantity [ expr {$no_s_quantity - $no_ol_quantity + 91} ]
@@ -1604,10 +1811,7 @@ proc insert_maria_no_stored_procs { testtype timedtype } {
     if { $byname } {
       set namecnt [ maria::sel $maria_handler "SELECT count(c_id) FROM customer WHERE c_last = '$name' AND c_d_id = $p_c_d_id AND c_w_id = $p_c_w_id" -flatlist ]
       set cust_list [ maria::sel $maria_handler "SELECT c_first, c_middle, c_id, c_street_1, c_street_2, c_city, c_state, c_zip, c_phone, c_credit, c_credit_lim, c_discount, c_balance, c_since FROM customer WHERE c_w_id = $p_c_w_id AND c_d_id = $p_c_d_id AND c_last = '$name' ORDER BY c_first" -list ]
-      if { [ expr {$namecnt % 2} ] eq 1 } {
-        set $namecnt [ expr {$namecnt + 1} ]
-      }
-      set cust_id_to_query [ lindex $cust_list [ expr {$namecnt / 2} ] ]
+      set cust_id_to_query [ lindex $cust_list [ expr {($namecnt - 1) / 2} ] ]
       lassign $cust_id_to_query p_c_first p_c_middle p_c_id p_c_street_1 p_c_street_2 p_c_city p_c_state p_c_zip p_c_phone p_c_credit p_c_credit_lim p_c_discount p_c_balance p_c_since
       set p_c_last $name
     } else {
@@ -1652,14 +1856,18 @@ proc insert_maria_no_stored_procs { testtype timedtype } {
       }
       set cust_list [ maria::sel $maria_handler "SELECT c_balance, c_first, c_middle, c_id FROM customer WHERE c_last = '$name' AND c_d_id = $d_id AND c_w_id = $w_id ORDER BY c_first" -list ]
       set cust_id_to_query [ lindex $cust_list [ expr ($namecnt/2)-1 ] ]
+      lassign $cust_id_to_query os_c_balance os_c_first os_c_middle c_id
+      set os_c_last $name
     } else {
-      set cust_id_to_query [ maria::sel $maria_handler "SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_id = $c_id AND c_d_id = $d_id AND c_w_id = $w_id" -list ]
+      set cust_id_to_query [ maria::sel $maria_handler "SELECT c_balance, c_first, c_middle, c_last FROM customer WHERE c_id = $c_id AND c_d_id = $d_id AND c_w_id = $w_id" -flatlist ]
+      lassign $cust_id_to_query os_c_balance os_c_first os_c_middle os_c_last
     }
-    lassign $cust_id_to_query os_c_balance os_c_first os_c_middle os_c_last
     set cust_orders [ maria::sel $maria_handler "SELECT o_id, o_carrier_id, o_entry_d FROM (SELECT o_id, o_carrier_id, o_entry_d FROM orders where o_d_id = $d_id AND o_w_id = $w_id and o_c_id = $c_id ORDER BY o_id DESC) AS sb LIMIT 1" -flatlist ]
     if { [ llength $cust_orders ] eq 0 } {
       set no_order_status "No orders for customer"
       set o_id 0
+      set o_entry_d ""
+      set o_carrier_id ""
     } else {
       lassign $cust_orders o_id o_carrier_id o_entry_d
     }
@@ -1725,15 +1933,10 @@ proc insert_maria_no_stored_procs { testtype timedtype } {
 
         set index_sp_1 [.ed_mainFrame.mainwin.textFrame.left.text search -forwards "\#NEW ORDER" 1.0 ]
         set index_sp_2 [.ed_mainFrame.mainwin.textFrame.left.text search -backwards "proc prep_statement" end ]
-        #End of run loop is previous line
-	#CLI indexes are characters in the string and integers GUI indexes are based on lines and position. Move back 1 line
-	if { [ string is entier $index_sp_2 ] } {
-       set index_sp_2 [ expr $index_sp_2 - 10 ]
-       	} else {
-       set index_sp_2 [ expr $index_sp_2 - 1 ]
-	}
-        #Delete stored procedures
-        .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index_sp_1 $index_sp_2+1l
+        # Remove up to the next procedure, including the old closing braces.
+        # CLI offsets are inclusive; Tk text indices use an exclusive end.
+        if {[string is entier -strict $index_sp_2]} {incr index_sp_2 -1}
+        .ed_mainFrame.mainwin.textFrame.left.text fastdelete $index_sp_1 $index_sp_2
         #Insert no stored procedures version
         .ed_mainFrame.mainwin.textFrame.left.text fastinsert $index_sp_1 "$neword_no_sp \n\n $pay_no_sp \n\n $ostat_no_sp \n\n $deliv_no_sp \n\n $stock_no_sp \n\n"
 }
