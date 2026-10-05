@@ -65,7 +65,8 @@ namespace eval oceanbase::mysql {
         set configmysql $mapped
         unset -nocomplain mysql_ssl_options
         try {
-            return [uplevel #0 [list $command {*}$args]]
+            # Preserve schema-operation callers so GUI load_virtual uses the loader count.
+            return [uplevel 1 [list $command {*}$args]]
         } finally {
             set configmysql $saved
             if {$had_ssl} {set mysql_ssl_options $saved_ssl} else {unset -nocomplain mysql_ssl_options}

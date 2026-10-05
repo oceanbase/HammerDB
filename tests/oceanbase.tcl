@@ -176,6 +176,39 @@ test config-isolation {A failing generator restores the saved MySQL configuratio
     list $message [expr {$::configmysql eq $saved_config}] $::mysql_ssl_options
 } -cleanup {rename ob_failing_generator {}; unset ::mysql_ssl_options} -result {expected 1 {sentinel unchanged}}
 
+test schema-operation-stack {GUI loader sizing can identify schema operations through the OB adapter} -setup {
+    set worker [interp create]
+    $worker eval {
+        namespace eval thread {
+            proc names {} {return main}
+            proc errorproc {args} {}
+        }
+        namespace eval tsv {proc set {args} {}}
+    }
+    $worker eval [list source [file join $root src generic genvu.tcl]]
+    $worker eval [list source [file join $root modules xml-1.1.tm]]
+    $worker eval [list source [file join $root modules oceanbaseconfig-1.0.tm]]
+    $worker eval [list source [file join $root src oceanbase mysql adapter.tcl]]
+    $worker eval [list proc find_config_dir {} [list return [file join $root config]]]
+    $worker eval [list set configoceanbase [::XML::To_Dict [file join $root config oceanbase.xml]]]
+    $worker eval {
+        set configmysql {sentinel unchanged}
+        proc ob_probe_generator {operation} {
+            # Use the real stacktrace consumed by GUI load_virtual.
+            list [expr {[lsearch [lindex [split [join [stacktrace]]]] $operation] >= 0}] $operation
+        }
+        foreach operation {build_schema check_schema delete_schema} {
+            proc $operation {} [list oceanbase::mysql::with_config ob_probe_generator $operation]
+        }
+    }
+} -body {
+    $worker eval {
+        list [build_schema] [check_schema] [delete_schema] $configmysql
+    }
+} -cleanup {
+    interp delete $worker
+} -result {{1 build_schema} {1 check_schema} {1 delete_schema} {sentinel unchanged}}
+
 test mode-legacy {Existing configurations default to the MySQL backend} -body {
     oceanbase::backend {connection {ob_host localhost}}
 } -result ::oceanbase::mysql
