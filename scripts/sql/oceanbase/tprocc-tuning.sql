@@ -1,9 +1,9 @@
--- OceanBase MySQL tenant: optional HammerDB TPROC-C benchmark tuning.
+-- OceanBase MySQL tenant: executable HammerDB TPROC-C benchmark tuning.
 -- Reference: obmark plugins/tpcc/4.4.2/optimize.py, local revision
 -- 26d44a0488cf91e8ca64e1c956f84f991bcd1150.
 -- These are benchmark candidates, not measured HammerDB improvements or
 -- production defaults. Check parameter availability on your OceanBase version.
--- This file only reads settings until you uncomment the desired statements.
+-- Sourcing this file records current settings, then applies the profile below.
 -- Connect as an administrator of the BUSINESS tenant (e.g. root@hammerdb),
 -- not root@sys. Do not apply this file to the OCP metadata tenant.
 -- Save the output below before changing anything; restore the recorded values
@@ -30,8 +30,8 @@ SHOW PARAMETERS WHERE name IN
 -- CLI equivalent BEFORE buildschema/loadscript:
 --   diset connection ob_query_timeout 600
 -- For larger builds, select a measured limit rather than copying 10 hours.
--- SET GLOBAL ob_query_timeout = 600000000;
--- SET SESSION ob_query_timeout = 600000000;
+SET GLOBAL ob_query_timeout = 600000000;
+SET SESSION ob_query_timeout = 600000000;
 -- Only extend transaction timeout if a single transaction actually needs it;
 -- changing query timeout does not extend an already-open transaction.
 -- SET GLOBAL ob_trx_timeout = 600000000;
@@ -39,7 +39,7 @@ SHOW PARAMETERS WHERE name IN
 
 -- obmark build candidate: allow packets up to 64 MiB. Reconnect the loaders
 -- after changing a global variable. This does not increase client-side limits.
--- SET GLOBAL max_allowed_packet = 67108864;
+SET GLOBAL max_allowed_packet = 67108864;
 
 -- Existing TPROC-C data can have statistics retried without rebuilding it.
 -- Replace tpcc with the configured database; run AFTER all loaders finish.
@@ -49,27 +49,29 @@ SHOW PARAMETERS WHERE name IN
 --               orders, order_line, stock, warehouse;
 -- Then run HammerDB Schema Check before starting a timed benchmark.
 
--- 2. TPROC-C MEASUREMENT CANDIDATES (business-tenant administrator)
--- Change one candidate at a time, keep warehouse count/driver/duration fixed,
--- and compare NOPM, response times, CPU, compaction and lock waits.
+-- 2. TPROC-C MEASUREMENT PROFILE (business-tenant administrator)
+-- Apply between runs, reconnect VUs, and compare the entire profile against
+-- the recorded baseline with warehouse count/driver/duration held fixed.
+-- Compare NOPM, response times, CPU, compaction and lock waits. To attribute
+-- a change, restore the baseline and test individual settings separately.
 
 -- Earlier MemStore freeze: obmark value 50 percent of the MemStore limit.
 -- This can increase minor-compaction frequency and background I/O.
--- ALTER SYSTEM SET freeze_trigger_percentage = 50;
+ALTER SYSTEM SET freeze_trigger_percentage = 50;
 
 -- obmark value 2 active workers per CPU quota. This may REDUCE concurrency.
 -- Check the captured workers_per_cpu_quota and keep it greater than this value.
--- Preserve the existing value unless an A/B run supports this change.
--- ALTER SYSTEM SET cpu_quota_concurrency = 2;
+-- This profile selects the obmark value; confirm its benefit with an A/B run.
+ALTER SYSTEM SET cpu_quota_concurrency = 2;
 
 -- obmark disables early lock release; throughput and lock waits may change.
--- ALTER SYSTEM SET enable_early_lock_release = false;
+ALTER SYSTEM SET enable_early_lock_release = false;
 
 -- obmark uses NOORDER and a 10,000,000-value auto-increment cache.
 -- Applies to auto-increment columns, not the explicit district.d_next_o_id
 -- sequence used to calculate HammerDB NOPM. IDs can have gaps / lack ordering.
--- ALTER SYSTEM SET default_auto_increment_mode = 'NOORDER';
--- SET GLOBAL auto_increment_cache_size = 10000000;
+ALTER SYSTEM SET default_auto_increment_mode = 'NOORDER';
+SET GLOBAL auto_increment_cache_size = 10000000;
 
 -- obmark value 100 defers write throttling until the MemStore threshold is
 -- reached. Consider ONLY with adequate memory/I/O headroom; this can increase
