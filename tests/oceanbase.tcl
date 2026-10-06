@@ -100,7 +100,7 @@ test distributed-validation {Reject an invalid distributed partition count} -bod
     dict set config tpcc ob_partition_count 0
     oceanbase::mysql::config $config
 } -returnCodes error -match glob -result {*partition count*}
-test distributed-ddl {Warehouse-affine tables share one cluster-scoped table group} -setup {
+test distributed-ddl {Warehouse-affine tables share one partition-sharded table group} -setup {
     set ::captured_sql {}
     proc mysqlexec {handler sql} {lappend ::captured_sql $sql}
     proc ConnectToMySQL {args} {return item_handle}
@@ -109,7 +109,7 @@ test distributed-ddl {Warehouse-affine tables share one cluster-scoped table gro
     eval [oceanbase::mysql::distributed_tprocc_script]
 } -body {
     CreateOceanBaseTables handle InnoDB tpcc_test 24 host 2883 null {} user password
-    set result [list [llength $::captured_sql] [string match {*SHARDING = 'PARTITION'*} [lindex $::captured_sql 0]] [string match {*SCOPE = 'CLUSTER'*} [lindex $::captured_sql 1]]]
+    set result [list [llength $::captured_sql] [string match {*SHARDING = 'PARTITION'*} [lindex $::captured_sql 0]] [expr {[lindex $::captured_sql 1] eq "ALTER TABLEGROUP hdb_tpcc_test_tg SHARDING = 'PARTITION'"}]]
     foreach {index key} {2 c_w_id 3 d_w_id 4 h_w_id 5 no_w_id 6 o_w_id 7 ol_w_id 8 s_w_id 9 w_id} {
         set ddl [lindex $::captured_sql $index]
         lappend result [expr {[string match {*TABLEGROUP = hdb_tpcc_test_tg*} $ddl] && [string match "*PARTITION BY HASH (`$key`)*PARTITIONS 24*" $ddl]}]

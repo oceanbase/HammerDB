@@ -8,7 +8,7 @@ proc CreateOceanBaseTables {mysql_handler mysql_storage_engine database partitio
     regsub -all {[^a-z0-9_]} $database_name _ database_name
     set tablegroup "hdb_[string range $database_name 0 55]_tg"
     mysqlexec $mysql_handler "CREATE TABLEGROUP IF NOT EXISTS $tablegroup SHARDING = 'PARTITION'"
-    mysqlexec $mysql_handler "ALTER TABLEGROUP $tablegroup SHARDING = 'PARTITION', SCOPE = 'CLUSTER'"
+    mysqlexec $mysql_handler "ALTER TABLEGROUP $tablegroup SHARDING = 'PARTITION'"
 
     set distribution "TABLEGROUP = $tablegroup
 PARTITION BY HASH (%s)
