@@ -55,8 +55,9 @@ SET GLOBAL max_allowed_packet = 67108864;
 -- Compare NOPM, response times, CPU, compaction and lock waits. To attribute
 -- a change, restore the baseline and test individual settings separately.
 
--- Earlier MemStore freeze: obmark value 50 percent of the MemStore limit.
--- This can increase minor-compaction frequency and background I/O.
+-- MemStore freeze threshold: obmark value 50 percent of the MemStore limit.
+-- Relative to the recorded baseline, raising this value delays freezes and
+-- lowering it triggers them sooner; memory pressure and background I/O change.
 ALTER SYSTEM SET freeze_trigger_percentage = 50;
 
 -- obmark value 2 active workers per CPU quota. This may REDUCE concurrency.
