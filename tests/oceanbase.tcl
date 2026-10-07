@@ -342,6 +342,39 @@ test data-oceanbase-unsupported {Offline generators reject unimplemented tenant 
     if {$had_rdbms} {set ::rdbms $saved_rdbms} else {unset ::rdbms}
 } -result {1 1 1 1}
 
+test tproch-optimized-defaults {Old configurations retain the original TPROC-H layout} -body {
+    set c [oceanbaseconfig::normalize {connection {} tpcc {} tpch {}}]
+    list [dict get $c tpch ob_tpch_optimized_schema] [dict get $c tpch ob_tpch_partition_count]
+} -result {false 24}
+test tproch-optimized-validation {Reject invalid optimized partition counts} -body {
+    set c [oceanbaseconfig::normalize [::XML::To_Dict [file join $root config oceanbase.xml]]]
+    dict set c tpch ob_tpch_partition_count 0
+    oceanbase::mysql::config $c
+} -returnCodes error -match glob -result {*TPROC-H partition count*}
+test tproch-optimized-layout {OBMark layout groups join keys and explicitly uses column store} -setup {
+    set worker [interp create]
+    $worker eval $::oceanbase::mysql::optimized_tproch_procedure
+    $worker eval {proc mysqlexec {handle sql} {lappend ::ddl $sql}; set ddl {}}
+} -body {
+    $worker eval {CreateOceanBaseHTables handle tpch 12}
+    set ddl [$worker eval {join $ddl \n}]
+    list [regexp -all {SHARDING = 'PARTITION'} $ddl] \
+        [regexp -all {partitions 12} $ddl] \
+        [regexp -all {with column group\(each column\)} $ddl] \
+        [regexp -all {tablegroup =? ?hdb_tpch_h_orders_tg} $ddl] \
+        [regexp -all {tablegroup =? ?hdb_tpch_h_parts_tg} $ddl] \
+        [regexp {primary key\(l_shipdate, l_orderkey, l_linenumber\)} $ddl] \
+        [regexp {PRIMARY KEY \(o_orderkey, o_orderdate\)} $ddl]
+} -cleanup {interp delete $worker} -result {2 6 8 2 2 1 1}
+test tproch-optimized-rewrite {The optimized builder is available to generated workers} -body {
+    set original {proc CreateTables {mysql_handler mysql_tpch_storage_engine} {}
+CreateTables $mysql_handler $mysql_tpch_storage_engine}
+    set rewritten [oceanbase::mysql::rewrite_optimized_tproch $original 12]
+    list [info complete $rewritten] \
+        [expr {[string first {proc CreateOceanBaseHTables} $rewritten] < [string first {proc CreateTables} $rewritten]}] \
+        [expr {[string first {CreateOceanBaseHTables $mysql_handler $db 12} $rewritten] >= 0}]
+} -result {1 1 1}
+
 set failed $::tcltest::numTests(Failed)
 cleanupTests
 if {$failed} {exit 1}

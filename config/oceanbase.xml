@@ -50,6 +50,8 @@
             <ob_tpch_dbase>tpch</ob_tpch_dbase>
             <ob_num_tpch_threads>1</ob_num_tpch_threads>
             <ob_tpch_storage_engine>innodb</ob_tpch_storage_engine>
+            <ob_tpch_optimized_schema>false</ob_tpch_optimized_schema>
+            <ob_tpch_partition_count>24</ob_tpch_partition_count>
         </schema>
         <driver>
             <ob_total_querysets>1</ob_total_querysets>

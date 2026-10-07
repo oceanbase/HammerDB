@@ -139,6 +139,29 @@ test runtime-connect {Both synchronous and asynchronous OB connections apply a s
     interp delete $mock
 } -result {{SET SESSION ob_query_timeout = 120000000} {SET SESSION ob_query_timeout = 120000000}}
 
+test tproch-optimized-build {Real TPROC-H generation injects OB layout only when selected} -setup {
+    set saved_ob $::configoceanbase
+    set had_dialog [llength [info commands tk_messageBox]]
+    if {$had_dialog} {rename tk_messageBox saved_h_dialog}
+    proc tk_messageBox {args} {return yes}
+    dbset db ob
+    dbset bm TPROC-H
+} -body {
+    dict set ::configoceanbase tpch ob_tpch_optimized_schema true
+    dict set ::configoceanbase tpch ob_tpch_partition_count 12
+    oceanbase::mysql::generate tpch build
+    set optimized $::_ED(package)
+    dict set ::configoceanbase tpch ob_tpch_optimized_schema false
+    oceanbase::mysql::generate tpch build
+    list [info complete $optimized] \
+        [expr {[string first {CreateOceanBaseHTables $mysql_handler $db 12} $optimized] >= 0}] \
+        [expr {[string first {proc CreateOceanBaseHTables} $::_ED(package)] == -1}]
+} -cleanup {
+    set ::configoceanbase $saved_ob
+    rename tk_messageBox {}
+    if {$had_dialog} {rename saved_h_dialog tk_messageBox}
+} -result {1 1 1}
+
 set failed $::tcltest::numTests(Failed)
 cleanupTests
 exit [expr {$failed > 0}]

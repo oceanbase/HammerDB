@@ -49,6 +49,32 @@ case-insensitive table discovery, and regular MySQL `ANALYZE TABLE`. Its single
 user refresh driver runs RF1, the 22 queries, then RF2. Keep verbose result output
 off for ordinary validation; some queries return many values.
 
+### Optional OBMark TPROC-H schema
+
+Enable `Tpch optimized schema` in the Schema tab, or configure:
+
+```tcl
+diset tpch ob_tpch_optimized_schema true
+diset tpch ob_tpch_partition_count 24
+```
+
+This opt-in layout follows OBMark's 4.4.2 MySQL TPC-H DDL: six large tables use
+KEY partitioning, all eight tables explicitly use `WITH COLUMN GROUP(each column)`
+and `ROW_FORMAT=CONDENSED`, and foreign keys and MySQL secondary indexes are omitted.
+LINEITEM/ORDERS share one tablegroup by order key; PART/PARTSUPP share another by
+part key. The tablegroups use modern `SHARDING='PARTITION'` syntax rather than
+OBMark's legacy `BINDING` syntax. LINEITEM's primary key is
+`(l_shipdate,l_orderkey,l_linenumber)` and ORDERS' is `(o_orderkey,o_orderdate)`.
+Numeric types follow the OBMark layout, using MySQL `DECIMAL` for its `NUMBER` column.
+
+The default remains false for existing configurations. This option only affects
+new schema builds; it does not migrate existing tables. Use a fresh database and
+regenerate the build script. The partition count is independent of loader threads
+and query parallelism. Apply `scripts/sql/oceanbase/tproch-tuning.sql` separately
+for runtime tuning. The optimized DDL requires an OceanBase version supporting
+column groups; the layout is validated on OceanBase 4.4.2.1. It does not import
+OBMark's query hints or establish a certified TPC-H result.
+
 Timed TPROC-C and its transaction chart both read the business tenant's
 `trans commit count` and `trans rollback count` from `oceanbase.GV$SYSSTAT`, summed
 across the tenant's OBServers. The user needs permission to read this view.

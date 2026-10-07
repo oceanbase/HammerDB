@@ -12,6 +12,8 @@ namespace eval oceanbaseconfig {
             dict set defaults tpcc ob_distributed_schema false
             dict set defaults tpcc ob_partition_count 24
             dict set defaults tpch ob_tpch_pass ""
+            dict set defaults tpch ob_tpch_optimized_schema false
+            dict set defaults tpch ob_tpch_partition_count 24
         }
         dict for {group values} $defaults {
             dict for {key value} $values {

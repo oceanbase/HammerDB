@@ -1,5 +1,6 @@
 # MySQL tenant backend. Oracle-specific options, connections and SQL belong in a separate backend.
 source [file join [file dirname [info script]] tprocc.tcl]
+source [file join [file dirname [info script]] tproch.tcl]
 source [file join [file dirname [info script]] runtime.tcl]
 source [file join [file dirname [info script]] counter.tcl]
 namespace eval oceanbase::mysql {
@@ -37,6 +38,12 @@ namespace eval oceanbase::mysql {
             }
         }
         set distributed [dict get $config tpcc ob_distributed_schema]
+        set optimized [dict get $config tpch ob_tpch_optimized_schema]
+        if {$optimized ni {true false}} {error "OceanBase TPROC-H optimized schema must be true or false"}
+        set h_partitions [dict get $config tpch ob_tpch_partition_count]
+        if {![string is integer -strict $h_partitions] || $h_partitions < 1 || $h_partitions > 8192} {
+            error "OceanBase TPROC-H partition count must be an integer from 1 to 8192"
+        }
         if {$distributed ni {true false}} {
             error "OceanBase distributed schema must be true or false"
         }
@@ -85,6 +92,9 @@ namespace eval oceanbase::mysql {
         if {[string length $_ED(package)] > 0} {
             set timeout [dict get $normalized connection ob_query_timeout]
             set _ED(package) [rewrite_runtime $_ED(package) $timeout]
+            if {$workload eq "tpch" && $action eq "build" && [dict get $normalized tpch ob_tpch_optimized_schema] eq "true"} {
+                set _ED(package) [rewrite_optimized_tproch $_ED(package) [dict get $normalized tpch ob_tpch_partition_count]]
+            }
             if {$workload eq "tpch" && $action in {build test}} {
                 # OceanBase requires abbreviated-month parsing for generated TPROC-H dates.
                 # Keep the shared MySQL generator on its existing full-month parser path.
@@ -121,9 +131,9 @@ namespace eval oceanbase::mysql {
         destroy .oboptions
     }
 
-    proc update_partition_count_state {widget} {
+    proc update_partition_count_state {widget {group tpcc} {key ob_distributed_schema}} {
         variable options
-        if {$options(tpcc,ob_distributed_schema) eq "true"} {
+        if {$options($group,$key) eq "true"} {
             $widget state !disabled
         } else {
             $widget state disabled
@@ -141,7 +151,7 @@ namespace eval oceanbase::mysql {
         wm transient .oboptions .ed_mainFrame
         ttk::notebook .oboptions.tabs
         pack .oboptions.tabs -fill both -expand 1 -padx 8 -pady 8
-        set schema_keys {ob_user ob_pass ob_dbase ob_count_ware ob_num_vu ob_partition ob_distributed_schema ob_partition_count ob_storage_engine ob_tpch_user ob_tpch_pass ob_tpch_dbase ob_scale_fact ob_num_tpch_threads ob_tpch_storage_engine}
+        set schema_keys {ob_user ob_pass ob_dbase ob_count_ware ob_num_vu ob_partition ob_distributed_schema ob_partition_count ob_storage_engine ob_tpch_user ob_tpch_pass ob_tpch_dbase ob_scale_fact ob_num_tpch_threads ob_tpch_storage_engine ob_tpch_optimized_schema ob_tpch_partition_count}
         foreach page {connection schema driver} {
             ttk::frame .oboptions.tabs.$page -padding 8
             .oboptions.tabs add .oboptions.tabs.$page -text [string totitle $page]
@@ -170,6 +180,8 @@ namespace eval oceanbase::mysql {
                 }
                 if {$key eq "ob_distributed_schema"} {set distributed_widget $frame.e$i}
                 if {$key eq "ob_partition_count"} {set partition_count_widget $frame.e$i}
+                if {$key eq "ob_tpch_optimized_schema"} {set h_optimized_widget $frame.e$i}
+                if {$key eq "ob_tpch_partition_count"} {set h_partition_widget $frame.e$i}
                 grid $frame.l$i -row $i -column 0 -sticky e -padx 5 -pady 2
                 grid $frame.e$i -row $i -column 1 -sticky ew -padx 5 -pady 2
             }
@@ -177,6 +189,9 @@ namespace eval oceanbase::mysql {
         if {$group eq "tpcc"} {
             $distributed_widget configure -command [list ::oceanbase::mysql::update_partition_count_state $partition_count_widget]
             update_partition_count_state $partition_count_widget
+        } elseif {$group eq "tpch"} {
+            $h_optimized_widget configure -command [list ::oceanbase::mysql::update_partition_count_state $h_partition_widget tpch ob_tpch_optimized_schema]
+            update_partition_count_state $h_partition_widget tpch ob_tpch_optimized_schema
         }
         if {$option eq "drive"} {.oboptions.tabs select .oboptions.tabs.driver}
         ttk::frame .oboptions.buttons
