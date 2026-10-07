@@ -1,109 +1,35 @@
-# OceanBase TPROC-H distributed schema best practices, adapted for HammerDB.
-# Uses column groups, join-key partitioning and modern OceanBase tablegroups.
-# Keep loader/query column names; inserts use explicit column lists.
-# Keep HammerDB comment capacities (customer 118, supplier 102) for TEXT_1 output.
+# Add OceanBase distribution/storage options to HammerDB's MySQL TPROC-H DDL.
+# Keep the original columns, types, lengths, keys and constraints in one place.
 namespace eval oceanbase::mysql {
     variable optimized_tproch_procedure {
-proc CreateOceanBaseHTables {mysql_handler database partition_count} {
+proc OceanBaseHTablegroups {database} {
     set name [string tolower $database]
     regsub -all {[^a-z0-9_]} $name _ name
     set name [string range $name 0 43]
-    set orders_group "hdb_${name}_h_orders_tg"
-    set parts_group "hdb_${name}_h_parts_tg"
-    foreach group [list $orders_group $parts_group] {
-        mysqlexec $mysql_handler "CREATE TABLEGROUP IF NOT EXISTS $group SHARDING = 'PARTITION'"
+    return [list "hdb_${name}_h_orders_tg" "hdb_${name}_h_parts_tg"]
+}
+
+proc OceanBaseHTableDDL {sql database partition_count} {
+    if {![regexp -nocase {^CREATE TABLE `?([a-z_]+)`?} $sql -> table]} {
+        error "Cannot identify the TPROC-H table for OceanBase distribution"
     }
-    mysqlexec $mysql_handler "CREATE TABLE LINEITEM (
-    l_orderkey BIGINT NOT NULL,
-    l_partkey BIGINT NOT NULL,
-    l_suppkey INTEGER NOT NULL,
-    l_linenumber INTEGER NOT NULL,
-    l_quantity DECIMAL(15,2) NOT NULL,
-    l_extendedprice DECIMAL(15,2) NOT NULL,
-    l_discount DECIMAL(15,2) NOT NULL,
-    l_tax DECIMAL(15,2) NOT NULL,
-    l_returnflag char(1) DEFAULT NULL,
-    l_linestatus char(1) DEFAULT NULL,
-    l_shipdate date NOT NULL,
-    l_commitdate date DEFAULT NULL,
-    l_receiptdate date DEFAULT NULL,
-    l_shipinstruct char(25) DEFAULT NULL,
-    l_shipmode char(10) DEFAULT NULL,
-    l_comment varchar(44) DEFAULT NULL,
-primary key(l_shipdate, l_orderkey, l_linenumber)
-)row_format = condensed
-tablegroup = $orders_group
-partition by key (l_orderkey) partitions $partition_count with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE ORDERS (
-    o_orderkey BIGINT NOT NULL,
-    o_custkey BIGINT NOT NULL,
-    o_orderstatus char(1) DEFAULT NULL,
-    o_totalprice DECIMAL(15,2) DEFAULT NULL,
-    o_orderdate date NOT NULL,
-    o_orderpriority char(15) DEFAULT NULL,
-    o_clerk char(15) DEFAULT NULL,
-    o_shippriority INTEGER DEFAULT NULL,
-    o_comment varchar(79) DEFAULT NULL,
-PRIMARY KEY (o_orderkey, o_orderdate)
-)row_format = condensed
-tablegroup = $orders_group
-partition by key(o_orderkey) partitions $partition_count with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE PARTSUPP (
-    ps_partkey BIGINT NOT NULL,
-    ps_suppkey INTEGER NOT NULL,
-    ps_availqty INTEGER DEFAULT NULL,
-    ps_supplycost DECIMAL(15,2) DEFAULT NULL,
-    ps_comment varchar(199) DEFAULT NULL,
-    PRIMARY KEY (ps_partkey, ps_suppkey)) row_format = condensed
-tablegroup $parts_group
-partition by key(ps_partkey) partitions $partition_count with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE PART (
-  p_partkey BIGINT NOT NULL,
-  p_name varchar(55) DEFAULT NULL,
-  p_mfgr char(25) DEFAULT NULL,
-  p_brand char(10) DEFAULT NULL,
-  p_type varchar(25) DEFAULT NULL,
-  p_size INTEGER DEFAULT NULL,
-  p_container char(10) DEFAULT NULL,
-  p_retailprice DECIMAL(15,2) DEFAULT NULL,
-  p_comment varchar(23) DEFAULT NULL,
-  PRIMARY KEY (p_partkey)) row_format = condensed
-tablegroup $parts_group
-partition by key(p_partkey) partitions $partition_count with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE CUSTOMER (
-  c_custkey BIGINT NOT NULL,
-  c_name varchar(25) DEFAULT NULL,
-  c_address varchar(40) DEFAULT NULL,
-  c_nationkey INTEGER DEFAULT NULL,
-  c_phone char(15) DEFAULT NULL,
-  c_acctbal DECIMAL(15,2) DEFAULT NULL,
-  c_mktsegment char(10) DEFAULT NULL,
-  c_comment varchar(118) DEFAULT NULL,
-  PRIMARY KEY (c_custkey)) row_format = condensed
-partition by key(c_custkey) partitions $partition_count with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE SUPPLIER (
-  s_suppkey INTEGER NOT NULL,
-  s_name char(25) DEFAULT NULL,
-  s_address varchar(40) DEFAULT NULL,
-  s_nationkey INTEGER DEFAULT NULL,
-  s_phone char(15) DEFAULT NULL,
-  s_acctbal DECIMAL(12,2) DEFAULT NULL,
-  s_comment varchar(102) DEFAULT NULL,
-  PRIMARY KEY (s_suppkey)
-) row_format = condensed  partition by key(s_suppkey) partitions $partition_count with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE NATION (
-  n_nationkey INTEGER NOT NULL,
-  n_name char(25) DEFAULT NULL,
-  n_regionkey INTEGER DEFAULT NULL,
-  n_comment varchar(152) DEFAULT NULL,
-  PRIMARY KEY (n_nationkey)
-) row_format = condensed with column group(each column)"
-    mysqlexec $mysql_handler "CREATE TABLE REGION (
-  r_regionkey INTEGER NOT NULL,
-  r_name char(25) DEFAULT NULL,
-  r_comment varchar(152) DEFAULT NULL,
-  PRIMARY KEY (r_regionkey)
-) row_format = condensed with column group(each column)"
+    set table [string toupper $table]
+    lassign [OceanBaseHTablegroups $database] orders_group parts_group
+    set keys [dict create ORDERS O_ORDERKEY LINEITEM L_ORDERKEY \
+        PART P_PARTKEY PARTSUPP PS_PARTKEY CUSTOMER C_CUSTKEY SUPPLIER S_SUPPKEY]
+    append sql "\nROW_FORMAT = CONDENSED"
+    if {$table in {ORDERS LINEITEM}} {
+        append sql "\nTABLEGROUP = $orders_group"
+    } elseif {$table in {PART PARTSUPP}} {
+        append sql "\nTABLEGROUP = $parts_group"
+    }
+    if {[dict exists $keys $table]} {
+        append sql "\nPARTITION BY KEY (`[dict get $keys $table]`) PARTITIONS $partition_count"
+    } elseif {$table ni {NATION REGION}} {
+        error "Unsupported TPROC-H table: $table"
+    }
+    append sql "\nWITH COLUMN GROUP(each column)"
+    return $sql
 }
     }
 
@@ -113,12 +39,45 @@ partition by key(c_custkey) partitions $partition_count with column group(each c
             error "OceanBase TPROC-H partition count must be an integer from 1 to 8192"
         }
         set original {CreateTables $mysql_handler $mysql_tpch_storage_engine}
-        set marker {proc CreateTables }
-        if {[string first $original $script] < 0 || [string first $marker $script] < 0} {
+        set start [string first {proc CreateTables } $script]
+        if {[string first $original $script] < 0 || $start < 0} {
             error "Cannot locate TPROC-H table creation in the generated script"
         }
-        set replacement "CreateOceanBaseHTables \$mysql_handler \$db $partition_count"
+        # Read only the complete original procedure, without evaluating the driver.
+        set definition {}
+        set end $start
+        while {$end < [string length $script]} {
+            set end [string first "\n" $script $end]
+            if {$end < 0} {set end [string length $script]}
+            set candidate [string range $script $start [expr {$end - 1}]]
+            if {[info complete $candidate]} {
+                set definition $candidate
+                break
+            }
+            incr end
+        }
+        if {$definition eq "" || [llength $definition] != 4 ||
+            [lindex $definition 0] ne "proc" || [lindex $definition 1] ne "CreateTables" ||
+            [lrange [lindex $definition 2] 0 end] ne {mysql_handler mysql_tpch_storage_engine}} {
+            error "Cannot read the original MySQL TPROC-H table builder"
+        }
+        set body [lindex $definition 3]
+        set execute {mysqlexec $mysql_handler $sql($i)}
+        if {[string first $execute $body] < 0} {
+            error "Cannot locate the original MySQL TPROC-H DDL execution"
+        }
+        set body [string map [list $execute \
+            {mysqlexec $mysql_handler [OceanBaseHTableDDL $sql($i) $database $partition_count]}] $body]
+        set preamble {
+    foreach group [OceanBaseHTablegroups $database] {
+        mysqlexec $mysql_handler "CREATE TABLEGROUP IF NOT EXISTS $group SHARDING = 'PARTITION'"
+    }
+}
+        set adapted [list proc CreateOceanBaseHTables \
+            {mysql_handler mysql_tpch_storage_engine database partition_count} "$preamble$body"]
+        set replacement "CreateOceanBaseHTables \$mysql_handler \$mysql_tpch_storage_engine \$db $partition_count"
         set script [string map [list $original $replacement] $script]
-        return [string map [list $marker "$optimized_tproch_procedure\n$marker"] $script]
+        set marker {proc CreateTables }
+        return [string map [list $marker "$optimized_tproch_procedure\n$adapted\n$marker"] $script]
     }
 }

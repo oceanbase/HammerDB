@@ -353,31 +353,51 @@ test tproch-optimized-validation {Reject invalid optimized partition counts} -bo
     dict set c tpch ob_tpch_partition_count 0
     oceanbase::mysql::config $c
 } -returnCodes error -match glob -result {*TPROC-H partition count*}
-test tproch-optimized-layout {OceanBase distributed layout groups join keys and explicitly uses column store} -setup {
+# Use the actual native builder as the schema fixture, not another copy of its DDL.
+set h_source [read [set fd [open [file join $root src mysql mysqlolap.tcl]]]]
+close $fd
+set h_start [string first {proc CreateTables } $h_source]
+set h_end [string first {proc CreateOBTables } $h_source $h_start]
+set h_native "[string range $h_source $h_start [expr {$h_end - 1}]]\nCreateTables \$mysql_handler \$mysql_tpch_storage_engine"
+unset h_source h_start h_end
+
+test tproch-optimized-layout {OceanBase distribution and column groups retain all native table definitions} -setup {
     set worker [interp create]
-    $worker eval $::oceanbase::mysql::optimized_tproch_procedure
-    $worker eval {proc mysqlexec {handle sql} {lappend ::ddl $sql}; set ddl {}}
+    $worker eval {proc mysqlexec {handle sql} {lappend ::ddl $sql}
+        set ddl {}; set mysql_handler handle; set mysql_tpch_storage_engine InnoDB; set db tpch}
 } -body {
-    $worker eval {CreateOceanBaseHTables handle tpch 12}
-    set ddl [$worker eval {join $ddl \n}]
-    list [regexp -all {SHARDING = 'PARTITION'} $ddl] \
-        [regexp -all {partitions 12} $ddl] \
-        [regexp -all {with column group\(each column\)} $ddl] \
-        [regexp -all {tablegroup =? ?hdb_tpch_h_orders_tg} $ddl] \
-        [regexp -all {tablegroup =? ?hdb_tpch_h_parts_tg} $ddl] \
-        [regexp {primary key\(l_shipdate, l_orderkey, l_linenumber\)} $ddl] \
-        [regexp {PRIMARY KEY \(o_orderkey, o_orderdate\)} $ddl] \
-        [regexp {c_comment varchar\(118\)} $ddl] \
-        [regexp {s_comment varchar\(102\)} $ddl]
-} -cleanup {interp delete $worker} -result {2 6 8 2 2 1 1 1 1}
-test tproch-optimized-rewrite {The optimized builder is available to generated workers} -body {
-    set original {proc CreateTables {mysql_handler mysql_tpch_storage_engine} {}
-CreateTables $mysql_handler $mysql_tpch_storage_engine}
-    set rewritten [oceanbase::mysql::rewrite_optimized_tproch $original 12]
+    $worker eval $h_native
+    set native [$worker eval {set ddl}]
+    $worker eval {set ddl {}}
+    set rewritten [oceanbase::mysql::rewrite_optimized_tproch $h_native 12]
+    $worker eval $rewritten
+    set distributed [$worker eval {set ddl}]
+    set preserved {}
+    foreach before $native after [lrange $distributed 2 end] {
+        lappend preserved [expr {[string range $after 0 [expr {[string length $before] - 1}]] eq $before}]
+    }
+    set ddl [join $distributed \n]
+    list [expr {[llength $native] == 8 && [llength $distributed] == 10 && 0 ni $preserved}] \
+        [regexp -all {SHARDING = 'PARTITION'} $ddl] \
+        [regexp -all {PARTITIONS 12} $ddl] \
+        [regexp -all {WITH COLUMN GROUP\(each column\)} $ddl] \
+        [regexp -all {TABLEGROUP = hdb_tpch_h_orders_tg} $ddl] \
+        [regexp -all {TABLEGROUP = hdb_tpch_h_parts_tg} $ddl]
+} -cleanup {interp delete $worker} -result {1 2 6 8 2 2}
+
+test tproch-optimized-rewrite {The adapted builder is available to generated workers} -body {
+    set rewritten [oceanbase::mysql::rewrite_optimized_tproch $h_native 12]
     list [info complete $rewritten] \
         [expr {[string first {proc CreateOceanBaseHTables} $rewritten] < [string first {proc CreateTables} $rewritten]}] \
-        [expr {[string first {CreateOceanBaseHTables $mysql_handler $db 12} $rewritten] >= 0}]
+        [expr {[string first {CreateOceanBaseHTables $mysql_handler $mysql_tpch_storage_engine $db 12} $rewritten] >= 0}]
 } -result {1 1 1}
+
+test tproch-optimized-reject-builder {Fail clearly if the native table builder changes incompatibly} -body {
+    set original {proc CreateTables {mysql_handler mysql_tpch_storage_engine} {}
+CreateTables $mysql_handler $mysql_tpch_storage_engine}
+    oceanbase::mysql::rewrite_optimized_tproch $original 12
+} -returnCodes error -match glob -result {*Cannot locate*DDL execution*}
+
 
 test config-initialize-persist {Missing defaults become public and persist without rewriting existing credentials} -setup {
     package require sqlite3

@@ -68,15 +68,18 @@ diset tpch ob_tpch_optimized_schema true
 diset tpch ob_tpch_partition_count 24
 ```
 
-This opt-in layout follows OceanBase distributed schema best practices: six large tables use
-KEY partitioning, all eight tables explicitly use `WITH COLUMN GROUP(each column)`
-and `ROW_FORMAT=CONDENSED`, and foreign keys and MySQL secondary indexes are omitted.
+This opt-in layout adds OceanBase distribution and storage options to HammerDB's
+original MySQL TPROC-H table definitions. Column names, types, lengths, nullability,
+primary keys, secondary indexes and foreign keys are retained from the native
+builder; a separate set of column definitions is not maintained.
+
+Six large tables use KEY partitioning, and all eight tables explicitly use
+`WITH COLUMN GROUP(each column)` and `ROW_FORMAT=CONDENSED`.
 LINEITEM/ORDERS share one tablegroup by order key; PART/PARTSUPP share another by
-part key. The tablegroups use modern `SHARDING='PARTITION'` syntax. LINEITEM's primary key is
-`(l_shipdate,l_orderkey,l_linenumber)` and ORDERS' is `(o_orderkey,o_orderdate)`.
-Numeric types are adapted for analytical workloads, using MySQL-compatible `DECIMAL` columns.
-Customer and supplier comment lengths retain HammerDB's 118/102-character capacities
-to accommodate the output of its existing data generator.
+part key. The tablegroups use modern `SHARDING='PARTITION'` syntax.
+LINEITEM retains its primary key `(L_ORDERKEY,L_LINENUMBER)`, and ORDERS retains
+`(O_ORDERKEY)`. Customer and supplier comments retain HammerDB's 118/102-character
+capacities, matching its existing data generator.
 
 The default remains false for existing configurations. This option only affects
 new schema builds; it does not migrate existing tables. Use a fresh database and

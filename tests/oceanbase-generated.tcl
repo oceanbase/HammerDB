@@ -204,28 +204,71 @@ test tproch-login-no-password-output {OB H connects without logging credentials;
     set ::configoceanbase $saved_ob
 } -result {handle -1 1 1}
 
-test tproch-optimized-build {Real TPROC-H generation injects OB layout only when selected} -setup {
+test tproch-optimized-build {Real TPROC-H generation extends native DDL only when selected} -setup {
     set saved_ob $::configoceanbase
     set had_dialog [llength [info commands tk_messageBox]]
     if {$had_dialog} {rename tk_messageBox saved_h_dialog}
     proc tk_messageBox {args} {return yes}
     dbset db ob
     dbset bm TPROC-H
+    set worker [interp create]
+    $worker eval {proc mysqlexec {handle sql} {lappend ::ddl $sql}; set ddl {}}
 } -body {
     dict set ::configoceanbase tpch ob_tpch_optimized_schema true
     dict set ::configoceanbase tpch ob_tpch_partition_count 12
     oceanbase::mysql::generate tpch build
     set optimized $::_ED(package)
+    set start [string first {proc OceanBaseHTablegroups } $optimized]
+    set end [string first {proc CreateTables } $optimized $start]
+    $worker eval [string range $optimized $start [expr {$end - 1}]]
+    $worker eval {CreateOceanBaseHTables handle InnoDB tpch 12}
+    set distributed [$worker eval {set ddl}]
+    $worker eval {set ddl {}}
     dict set ::configoceanbase tpch ob_tpch_optimized_schema false
     oceanbase::mysql::generate tpch build
+    set plain $::_ED(package)
+    set start [string first {proc CreateTables } $plain]
+    set end [string first {proc CreateOBTables } $plain $start]
+    $worker eval [string range $plain $start [expr {$end - 1}]]
+    $worker eval {CreateTables handle InnoDB}
+    set native [$worker eval {set ddl}]
+    set preserved {}
+    foreach before $native after [lrange $distributed 2 end] {
+        lappend preserved [expr {[string range $after 0 [expr {[string length $before] - 1}]] eq $before}]
+    }
     list [info complete $optimized] \
-        [expr {[string first {CreateOceanBaseHTables $mysql_handler $db 12} $optimized] >= 0}] \
-        [expr {[string first {proc CreateOceanBaseHTables} $::_ED(package)] == -1}]
+        [expr {[string first {CreateOceanBaseHTables $mysql_handler $mysql_tpch_storage_engine $db 12} $optimized] >= 0}] \
+        [expr {[string first {proc CreateOceanBaseHTables} $plain] == -1}] \
+        [expr {[llength $native] == 8 && [llength $distributed] == 10 && 0 ni $preserved}]
 } -cleanup {
+    interp delete $worker
     set ::configoceanbase $saved_ob
     rename tk_messageBox {}
     if {$had_dialog} {rename saved_h_dialog tk_messageBox}
-} -result {1 1 1}
+} -result {1 1 1 1}
+
+test tproch-native-after-distributed {Distributed generation leaves native MySQL schema generation unchanged} -setup {
+    set saved_ob $::configoceanbase
+    set saved_mysql $::configmysql
+    set had_dialog [llength [info commands tk_messageBox]]
+    if {$had_dialog} {rename tk_messageBox saved_native_h_dialog}
+    proc tk_messageBox {args} {return yes}
+} -body {
+    dbset db mysql
+    dbset bm TPROC-H
+    build_mysqltpch
+    set before $::_ED(package)
+    dict set ::configoceanbase tpch ob_tpch_optimized_schema true
+    oceanbase::mysql::generate tpch build
+    build_mysqltpch
+    expr {$before eq $::_ED(package)}
+} -cleanup {
+    set ::configoceanbase $saved_ob
+    set ::configmysql $saved_mysql
+    rename tk_messageBox {}
+    if {$had_dialog} {rename saved_native_h_dialog tk_messageBox}
+} -result 1
+
 
 test schema-passwords {Generated C/H build/check/delete entries preserve empty and spaced passwords} -setup {
     set saved_ob $::configoceanbase
