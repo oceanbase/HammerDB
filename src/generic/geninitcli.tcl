@@ -73,6 +73,9 @@ if { $dbdict eq "" } {
     Dict2SQLite "database" $dbdict
 }
 
+package require oceanbaseconfig
+set dbdict [oceanbaseconfig::merge_registry $dbdict [::XML::To_Dict $dirname/database.xml]]
+
 #Load database details in dict named configdbname
 foreach { key } [ dict keys $dbdict ] {
     set dictname config$key

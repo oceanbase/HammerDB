@@ -3,11 +3,39 @@ set argv {}
 set root [file dirname [file dirname [file normalize [info script]]]]
 package require tcltest 2
 namespace import ::tcltest::*
+# Route every configuration read/write to disposable copies before dbset/diset.
+set isolation_channel [file tempfile oceanbase_test_state_dir [file join [temporaryDirectory] ob-generated-]]
+close $isolation_channel
+file delete $oceanbase_test_state_dir
+file mkdir $oceanbase_test_state_dir
+try {
+    if {$::tcl_platform(platform) ne "windows"} {file attributes $oceanbase_test_state_dir -permissions 0700}
+    catch {hdb close}
+    foreach name [concat {generic database} [dict keys $dbdict]] {
+        set original [CheckSQLiteDB $name]
+        if {[file exists $original]} {
+            file copy $original [file join $oceanbase_test_state_dir "$name.db"]
+        }
+    }
+    rename ::CheckSQLiteDB ::oceanbase_test_original_CheckSQLiteDB
+    proc ::CheckSQLiteDB {name} {
+        return [file join $::oceanbase_test_state_dir "$name.db"]
+    }
 dbset db ob
 dbset bm TPROC-C
 diset tpcc ob_driver test
 diset tpcc ob_no_stored_procs true
 loadscript
+proc generated_password_assignment {script} {
+    set start [string first "\nset password " $script]
+    if {$start < 0} {error "Missing password header"}
+    set command ""
+    foreach line [split [string range $script [expr {$start + 1}] end] \n] {
+        append command $line \n
+        if {[info complete $command]} {return $command}
+    }
+    error "Incomplete password assignment"
+}
 proc generated_proc {name script} {
     set start [string first "proc $name \{" $script]
     if {$start < 0} {error "Missing generated procedure $name"}
@@ -140,6 +168,42 @@ test runtime-connect {Both synchronous and asynchronous OB connections apply a s
     interp delete $mock
 } -result {{SET SESSION ob_query_timeout = 120000000} {SET SESSION ob_query_timeout = 120000000}}
 
+test tproch-login-no-password-output {OB H connects without logging credentials; native generation stays unchanged} -setup {
+    set saved_ob $::configoceanbase
+    set worker [interp create]
+    dbset db ob
+    dbset bm TPROC-H
+    loadscript
+    set h_script $::_ED(package)
+    foreach name {chk_socket ConnectToMySQL} {
+        $worker eval [generated_proc $name $h_script]
+    }
+    $worker eval {
+        set output {}
+        proc puts {args} {lappend ::output [lindex $args end]}
+        proc mysqlconnect {args} {set ::connection $args; return handle}
+        proc mysqluse {args} {}
+        namespace eval mysql {
+            proc autocommit {args} {}
+            proc sel {args} {return {}}
+        }
+        namespace eval oceanbasecommon {proc configure_session {args} {}}
+    }
+} -body {
+    set password {synthetic'password$with[syntax]}
+    set handle [$worker eval [list ConnectToMySQL host 2883 null {} root@tenant $password tpch false {}]]
+    set leaked [$worker eval [list string first $password [$worker eval {join $output \n}]]]
+    set delivered [$worker eval {dict get $connection -password}]
+    dbset db mysql
+    dbset bm TPROC-H
+    loadscript
+    list $handle $leaked [expr {$delivered eq $password}] \
+        [expr {[string first {puts "login_command $login_command"} $::_ED(package)] >= 0}]
+} -cleanup {
+    interp delete $worker
+    set ::configoceanbase $saved_ob
+} -result {handle -1 1 1}
+
 test tproch-optimized-build {Real TPROC-H generation injects OB layout only when selected} -setup {
     set saved_ob $::configoceanbase
     set had_dialog [llength [info commands tk_messageBox]]
@@ -203,24 +267,17 @@ test workload-passwords {Real diset and C test/timed/H query drivers preserve pa
     set results {}
     dbset db ob
     foreach {workload action} {tpcc test tpcc timed tpch test} {
-        foreach password [list {} {two words} {a;[error unsafe]$x} {double"quote} {back\nslash} {true} {false}] {
+        foreach password [list {} {two words} {a;[error unsafe]$x} {double"quote} {back\nslash} {true} {false} "two\nlines" "two\n\"lines"] {
             set key [expr {$workload eq "tpcc" ? "ob_pass" : "ob_tpch_pass"}]
             diset $workload $key $password
             oceanbase::mysql::generate $workload $action
-            set found 0
-            foreach line [split $::_ED(package) \n] {
-                if {[string match {set password *} $line]} {
-                    set worker [interp create]
-                    $worker eval $line
-                    lappend results [expr {[$worker eval {set password}] eq $password}]
-                    interp delete $worker
-                    incr found
-                }
-            }
-            if {!$found} {error "Missing password header"}
+            set worker [interp create]
+            $worker eval [generated_password_assignment $::_ED(package)]
+            lappend results [expr {[$worker eval {set password}] eq $password}]
+            interp delete $worker
         }
     }
-    expr {0 ni $results && [llength $results] >= 21}
+    expr {0 ni $results && [llength $results] == 27}
 } -cleanup {
     set ::configoceanbase $saved_ob
     set ::rdbms $saved_db
@@ -263,4 +320,12 @@ test counter-diset-passwords {Counter command after real diset contains decoded 
 
 set failed $::tcltest::numTests(Failed)
 cleanupTests
+} finally {
+    catch {hdb close}
+    if {[llength [info commands ::oceanbase_test_original_CheckSQLiteDB]]} {
+        rename ::CheckSQLiteDB {}
+        rename ::oceanbase_test_original_CheckSQLiteDB ::CheckSQLiteDB
+    }
+    file delete -force $oceanbase_test_state_dir
+}
 exit [expr {$failed > 0}]

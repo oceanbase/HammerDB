@@ -72,6 +72,9 @@ if { $dbdict eq "" } {
     Dict2SQLite "database" $dbdict
 }
 
+package require oceanbaseconfig
+set dbdict [oceanbaseconfig::merge_registry $dbdict [::XML::To_Dict $dirname/database.xml]]
+
 #Start the GUI using database config
 ed_start_gui $dbdict $icons $iconalt
 wm positionfrom .

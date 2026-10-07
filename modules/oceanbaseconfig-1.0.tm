@@ -1,6 +1,36 @@
 # OceanBase defaults are applied after XML or SQLite loading. The shared XML
 # parser deliberately retains its existing handling of empty elements.
 namespace eval oceanbaseconfig {
+    proc merge_registry {saved defaults} {
+        # Keep saved categories intact; add only categories introduced by XML.
+        set defaults [regsub -all {(TP)(RO)(C-[CH])} $defaults {\1\3}]
+        set missing {}
+        dict for {name values} $defaults {
+            if {![dict exists $saved $name]} {
+                dict set missing $name $values
+            }
+        }
+        if {[dict size $missing]} {
+            package require sqlite3
+            sqlite3 ::oceanbaseconfig::registrydb [CheckSQLiteDB database]
+            try {
+                registrydb timeout 30000
+                registrydb transaction {
+                    dict for {name values} $missing {
+                        if {![regexp {^[a-z][a-z0-9_]*$} $name]} {error "Invalid database category: $name"}
+                        registrydb eval "CREATE TABLE IF NOT EXISTS ${name}(key TEXT, val TEXT)"
+                        dict for {key value} $values {
+                            registrydb eval "INSERT INTO ${name}(key,val) VALUES(\$key,\$value)"
+                        }
+                    }
+                }
+            } finally {
+                registrydb close
+            }
+        }
+        return [dict merge $saved $missing]
+    }
+
     proc save {configuration} {
         package require sqlite3
         sqlite3 ::oceanbaseconfig::savedb [CheckSQLiteDB oceanbase]

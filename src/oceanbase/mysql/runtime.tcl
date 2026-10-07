@@ -9,17 +9,13 @@ namespace eval oceanbase::mysql {
 
     proc rewrite_workload_password {script workload configuration} {
         set key [expr {$workload eq "tpcc" ? "mysql_pass" : "mysql_tpch_pass"}]
-        set password [decode_password [dict get $configuration $workload $key]]
-        set lines [split $script \n]
-        set found 0
-        for {set i 0} {$i < [llength $lines]} {incr i} {
-            if {[regexp {^set password .*;# Password for the MySQL user$} [lindex $lines $i]]} {
-                lset lines $i "[list set password $password] ;# Password for the MySQL user"
-                incr found
-            }
-        }
-        if {!$found} {error "OceanBase adapter: missing workload password assignment"}
-        return [join $lines \n]
+        set stored [dict get $configuration $workload $key]
+        set password [decode_password $stored]
+        # Match the generator's complete assignment, including any newlines in
+        # its value. The original command need not be valid Tcl yet.
+        set original "set password \"[quotemeta $stored]\" ;# Password for the MySQL user"
+        if {[string first $original $script] < 0} {error "OceanBase adapter: missing workload password assignment"}
+        return [string map [list $original "[list set password $password] ;# Password for the MySQL user"] $script]
     }
 
     proc rewrite_schema_entry {script workload action configuration} {
@@ -51,6 +47,7 @@ namespace eval oceanbase::mysql {
         set script [string map [list $library_check $setup \
             {append connectstring " -user $user -password $password"} {lappend connectstring -user $user -password $password} \
             {set login_command "mysqlconnect [ dict get $connectstring ]"} {set login_command [linsert $connectstring 0 mysqlconnect]} \
+            {puts "login_command $login_command"} {} \
             {return $mysql_handler} {oceanbasecommon::configure_session $mysql_handler
         return $mysql_handler} \
             {testresult $nopm $tpm MySQL} {testresult $nopm $tpm OceanBase} \

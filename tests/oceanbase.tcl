@@ -525,6 +525,54 @@ test options-save-failure {GUI publishes new configuration and closes only after
     $worker eval {list [dict get $configoceanbase tpcc ob_pass] [info exists closed] [string match {*disk failure*} $message]}
 } -cleanup {interp delete $worker} -result {old 0 1}
 
+
+foreach initializer {geninit.tcl geninitcli.tcl geninitws.tcl} {
+    test registry-upgrade-$initializer {A same-version saved registry gains OB without replacing user categories} -setup {
+        set worker [interp create]
+        set state_file [makeFile {} registry-$initializer.db]
+        set code [read [set fd [open [file join $root src generic $initializer]]]]
+        close $fd
+        set start [string first "#Load database config from SQLite database.db" $code]
+        set end [string first [expr {$initializer eq "geninit.tcl" ? "#Start the GUI" : "#Load database details"}] $code $start]
+        set startup [string range $code $start [expr {$end - 1}]]
+        $worker eval [list set auto_path $::auto_path]
+        $worker eval [list source [file join $root modules oceanbaseconfig-1.0.tm]]
+        $worker eval [list set state_file $state_file]
+        $worker eval [list set xml_registry [::XML::To_Dict [file join $root config database.xml]]]
+        $worker eval {
+            package require sqlite3
+            sqlite3 checkregistry $state_file
+            set saved_registry {mysql {name MySQL prefix mysql description {user's custom description}}}
+            checkregistry eval {CREATE TABLE mysql(key TEXT,val TEXT)}
+            dict for {key value} [dict get $saved_registry mysql] {
+                checkregistry eval {INSERT INTO mysql VALUES($key,$value)}
+            }
+            proc CheckSQLiteDB {name} {return $::state_file}
+            proc SQLite2Dict {name} {return $::saved_registry}
+            proc Dict2SQLite {args} {error "Existing registry must not be rewritten"}
+            namespace eval XML {proc To_Dict {args} {return $::xml_registry}}
+            set dirname unused
+        }
+    } -body {
+        $worker eval $startup
+        set results [$worker eval {
+            list [dict get $dbdict oceanbase prefix] [dict get $dbdict oceanbase workloads] \
+                [dict get $dbdict mysql description] \
+                [checkregistry onecolumn {SELECT val FROM mysql WHERE key='description'}] \
+                [checkregistry onecolumn {SELECT val FROM oceanbase WHERE key='prefix'}]
+        }]
+        # Reopening the now-migrated registry must not insert duplicate entries.
+        $worker eval {set saved_registry $dbdict}
+        $worker eval $startup
+        lappend results [$worker eval {checkregistry onecolumn {SELECT count(*) FROM oceanbase WHERE key='prefix'}}]
+        set results
+    } -cleanup {
+        $worker eval {checkregistry close}
+        interp delete $worker
+        removeFile registry-$initializer.db
+    } -result {ob {TPC-C TPC-H} {user's custom description} {user's custom description} ob 1}
+}
+
 set failed $::tcltest::numTests(Failed)
 cleanupTests
 if {$failed} {exit 1}

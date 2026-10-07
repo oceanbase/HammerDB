@@ -124,7 +124,9 @@ Runtime helper tests can be run with Tcl 8.6 or newer:
 tclsh tests/oceanbase.tcl
 ```
 
-Generated-driver regression tests run inside the v6.0 CLI:
+Generated-driver regression tests run inside the CLI. The suite uses disposable
+copies of the configuration databases and removes them on success or failure;
+saved passwords and benchmark settings are retained.
 
 ```sh
 ./hammerdbcli auto tests/oceanbase-generated.tcl
