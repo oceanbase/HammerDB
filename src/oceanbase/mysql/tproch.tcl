@@ -1,5 +1,5 @@
 # Add OceanBase distribution/storage options to HammerDB's MySQL TPROC-H DDL.
-# Keep the original columns, types, lengths, keys and constraints in one place.
+# Reuse native column definitions; adapt numeric types for analytical workloads.
 namespace eval oceanbase::mysql {
     variable optimized_tproch_procedure {
 proc OceanBaseHTablegroups {database} {
@@ -14,6 +14,27 @@ proc OceanBaseHTableDDL {sql database partition_count} {
         error "Cannot identify the TPROC-H table for OceanBase distribution"
     }
     set table [string toupper $table]
+    # Apply only the selected numeric adaptations. Preserve names, string lengths,
+    # nullability and the rest of the native column definitions.
+    set types [dict create \
+        LINEITEM {L_PARTKEY INT BIGINT L_QUANTITY INT DECIMAL(15,2)
+            L_EXTENDEDPRICE DECIMAL(10,2) DECIMAL(15,2)
+            L_DISCOUNT DECIMAL(10,2) DECIMAL(15,2)
+            L_TAX DECIMAL(10,2) DECIMAL(15,2)} \
+        ORDERS {O_CUSTKEY INT BIGINT O_TOTALPRICE DECIMAL(10,2) DECIMAL(15,2)} \
+        PARTSUPP {PS_PARTKEY INT BIGINT PS_SUPPLYCOST INT DECIMAL(15,2)} \
+        PART {P_PARTKEY INT BIGINT P_RETAILPRICE DECIMAL(10,2) DECIMAL(15,2)} \
+        CUSTOMER {C_CUSTKEY INT BIGINT C_ACCTBAL DECIMAL(10,2) DECIMAL(15,2)} \
+        SUPPLIER {S_ACCTBAL DECIMAL(10,2) DECIMAL(12,2)}]
+    if {[dict exists $types $table]} {
+        foreach {column original adapted} [dict get $types $table] {
+            set original_pattern [string map [list ( {\(} ) {\)}] $original]
+            set pattern [format {(^[ \t]*`?%s`?[ \t]+)%s([ \t]+)} $column $original_pattern]
+            if {[regsub -line -nocase $pattern $sql [format {\1%s\2} $adapted] sql] != 1} {
+                error "Cannot adapt the original TPROC-H type of $table.$column"
+            }
+        }
+    }
     lassign [OceanBaseHTablegroups $database] orders_group parts_group
     set keys [dict create ORDERS O_ORDERKEY LINEITEM L_ORDERKEY \
         PART P_PARTKEY PARTSUPP PS_PARTKEY CUSTOMER C_CUSTKEY SUPPLIER S_SUPPKEY]

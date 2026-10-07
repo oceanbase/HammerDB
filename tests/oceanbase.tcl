@@ -361,7 +361,24 @@ set h_end [string first {proc CreateOBTables } $h_source $h_start]
 set h_native "[string range $h_source $h_start [expr {$h_end - 1}]]\nCreateTables \$mysql_handler \$mysql_tpch_storage_engine"
 unset h_source h_start h_end
 
-test tproch-optimized-layout {OceanBase distribution and column groups retain all native table definitions} -setup {
+set h_expected_types {
+    {L_PARTKEY INT} {L_PARTKEY BIGINT}
+    {L_QUANTITY INT} {L_QUANTITY DECIMAL(15,2)}
+    {L_EXTENDEDPRICE DECIMAL(10,2)} {L_EXTENDEDPRICE DECIMAL(15,2)}
+    {L_DISCOUNT DECIMAL(10,2)} {L_DISCOUNT DECIMAL(15,2)}
+    {L_TAX DECIMAL(10,2)} {L_TAX DECIMAL(15,2)}
+    {`O_CUSTKEY` INT} {`O_CUSTKEY` BIGINT}
+    {`O_TOTALPRICE` DECIMAL(10,2)} {`O_TOTALPRICE` DECIMAL(15,2)}
+    {PS_PARTKEY INT} {PS_PARTKEY BIGINT}
+    {PS_SUPPLYCOST INT} {PS_SUPPLYCOST DECIMAL(15,2)}
+    {P_PARTKEY INT} {P_PARTKEY BIGINT}
+    {P_RETAILPRICE DECIMAL(10,2)} {P_RETAILPRICE DECIMAL(15,2)}
+    {C_CUSTKEY INT} {C_CUSTKEY BIGINT}
+    {C_ACCTBAL DECIMAL(10,2)} {C_ACCTBAL DECIMAL(15,2)}
+    {S_ACCTBAL DECIMAL(10,2)} {S_ACCTBAL DECIMAL(12,2)}
+}
+
+test tproch-optimized-layout {OceanBase numeric adaptations preserve every other native table definition} -setup {
     set worker [interp create]
     $worker eval {proc mysqlexec {handle sql} {lappend ::ddl $sql}
         set ddl {}; set mysql_handler handle; set mysql_tpch_storage_engine InnoDB; set db tpch}
@@ -374,6 +391,7 @@ test tproch-optimized-layout {OceanBase distribution and column groups retain al
     set distributed [$worker eval {set ddl}]
     set preserved {}
     foreach before $native after [lrange $distributed 2 end] {
+        set before [string map $h_expected_types $before]
         lappend preserved [expr {[string range $after 0 [expr {[string length $before] - 1}]] eq $before}]
     }
     set ddl [join $distributed \n]

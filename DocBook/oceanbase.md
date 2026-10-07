@@ -69,9 +69,12 @@ diset tpch ob_tpch_partition_count 24
 ```
 
 This opt-in layout adds OceanBase distribution and storage options to HammerDB's
-original MySQL TPROC-H table definitions. Column names, types, lengths, nullability,
+original MySQL TPROC-H table definitions. Column names, string lengths, nullability,
 primary keys, secondary indexes and foreign keys are retained from the native
-builder; a separate set of column definitions is not maintained.
+builder; a separate set of column definitions is not maintained. Selected numeric
+types are adapted: part/customer keys use BIGINT, analytical amounts generally use
+DECIMAL(15,2), supplier account balance uses DECIMAL(12,2), and LINEITEM quantity
+and PARTSUPP supply cost use DECIMAL(15,2).
 
 Six large tables use KEY partitioning, and all eight tables explicitly use
 `WITH COLUMN GROUP(each column)` and `ROW_FORMAT=CONDENSED`.

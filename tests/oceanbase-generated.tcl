@@ -204,6 +204,23 @@ test tproch-login-no-password-output {OB H connects without logging credentials;
     set ::configoceanbase $saved_ob
 } -result {handle -1 1 1}
 
+set h_expected_types {
+    {L_PARTKEY INT} {L_PARTKEY BIGINT}
+    {L_QUANTITY INT} {L_QUANTITY DECIMAL(15,2)}
+    {L_EXTENDEDPRICE DECIMAL(10,2)} {L_EXTENDEDPRICE DECIMAL(15,2)}
+    {L_DISCOUNT DECIMAL(10,2)} {L_DISCOUNT DECIMAL(15,2)}
+    {L_TAX DECIMAL(10,2)} {L_TAX DECIMAL(15,2)}
+    {`O_CUSTKEY` INT} {`O_CUSTKEY` BIGINT}
+    {`O_TOTALPRICE` DECIMAL(10,2)} {`O_TOTALPRICE` DECIMAL(15,2)}
+    {PS_PARTKEY INT} {PS_PARTKEY BIGINT}
+    {PS_SUPPLYCOST INT} {PS_SUPPLYCOST DECIMAL(15,2)}
+    {P_PARTKEY INT} {P_PARTKEY BIGINT}
+    {P_RETAILPRICE DECIMAL(10,2)} {P_RETAILPRICE DECIMAL(15,2)}
+    {C_CUSTKEY INT} {C_CUSTKEY BIGINT}
+    {C_ACCTBAL DECIMAL(10,2)} {C_ACCTBAL DECIMAL(15,2)}
+    {S_ACCTBAL DECIMAL(10,2)} {S_ACCTBAL DECIMAL(12,2)}
+}
+
 test tproch-optimized-build {Real TPROC-H generation extends native DDL only when selected} -setup {
     set saved_ob $::configoceanbase
     set had_dialog [llength [info commands tk_messageBox]]
@@ -234,6 +251,7 @@ test tproch-optimized-build {Real TPROC-H generation extends native DDL only whe
     set native [$worker eval {set ddl}]
     set preserved {}
     foreach before $native after [lrange $distributed 2 end] {
+        set before [string map $h_expected_types $before]
         lappend preserved [expr {[string range $after 0 [expr {[string length $before] - 1}]] eq $before}]
     }
     list [info complete $optimized] \
