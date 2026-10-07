@@ -353,7 +353,7 @@ test tproch-optimized-validation {Reject invalid optimized partition counts} -bo
     dict set c tpch ob_tpch_partition_count 0
     oceanbase::mysql::config $c
 } -returnCodes error -match glob -result {*TPROC-H partition count*}
-test tproch-optimized-layout {OBMark layout groups join keys and explicitly uses column store} -setup {
+test tproch-optimized-layout {OceanBase distributed layout groups join keys and explicitly uses column store} -setup {
     set worker [interp create]
     $worker eval $::oceanbase::mysql::optimized_tproch_procedure
     $worker eval {proc mysqlexec {handle sql} {lappend ::ddl $sql}; set ddl {}}

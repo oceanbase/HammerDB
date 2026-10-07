@@ -1,5 +1,5 @@
-# OBMark 4.4.2 MySQL TPC-H layout, adapted for HammerDB and modern OB tablegroups.
-# Source: plugins/tpch/4.4.2/create_tpch_mysql_table_part.ddl in oceanbase/obmark.
+# OceanBase TPROC-H distributed schema best practices, adapted for HammerDB.
+# Uses column groups, join-key partitioning and modern OceanBase tablegroups.
 # Keep loader/query column names; inserts use explicit column lists.
 # Keep HammerDB comment capacities (customer 118, supplier 102) for TEXT_1 output.
 namespace eval oceanbase::mysql {

@@ -1,9 +1,6 @@
 -- OceanBase MySQL tenant: executable HammerDB TPROC-H benchmark profile.
 -- Target: OceanBase 4.4.2; check availability before using other versions.
--- Reference: obmark plugins/tpch/4.4.2/optimize.py delegates to the AP profile
--- in plugins/oceanbase/4.4.2/optimize.py; packet size also appears in
--- plugins/tpch/4.4.2/run_test.py. Local source revision:
--- 26d44a0488cf91e8ca64e1c956f84f991bcd1150.
+-- OceanBase analytical-workload tuning recommendations adapted for HammerDB.
 -- These are benchmark candidates, not production defaults or measured gains.
 -- Apply to a dedicated BUSINESS MySQL tenant as its administrator, not root@sys
 -- or the OCP metadata tenant. Apply before schema creation and between runs.
@@ -25,9 +22,9 @@ SHOW SESSION VARIABLES WHERE Variable_name IN
 SHOW PARAMETERS WHERE name IN
   ('spill_compression_codec', 'default_table_store_format');
 
--- 2. OBMARK AP VALUES
+-- 2. OCEANBASE ANALYTICAL-WORKLOAD TUNING CANDIDATES
 -- Timeouts are microseconds: query = 10800 seconds (3 hours), transaction =
--- 10000 seconds. These are the distinct obmark values; a transaction can expire
+-- 10000 seconds. The limits differ, so a transaction can expire
 -- before the query timeout. Long limits permit long work, not faster work.
 SET GLOBAL ob_query_timeout = 10800000000;
 SET SESSION ob_query_timeout = 10800000000;
@@ -40,7 +37,7 @@ SET GLOBAL max_allowed_packet = 67108864;
 SET GLOBAL ob_sql_work_area_percentage = 50;
 ALTER SYSTEM SET spill_compression_codec = 'LZ4';
 
--- obmark's benchmark PX queuing target. This is a worker admission/queuing
+-- Benchmark PX queuing target candidate. This is a worker admission/queuing
 -- threshold per server, NOT a DOP or a command to start 10000 workers. It can
 -- substantially relax queuing; size it down for concurrent query streams.
 SET GLOBAL parallel_servers_target = 10000;
@@ -51,7 +48,7 @@ SET GLOBAL parallel_servers_target = 10000;
 -- parameter does not convert tables back. Do not mix row/column results silently.
 ALTER SYSTEM SET default_table_store_format = 'column';
 
--- 3. HAMMERDB PARALLEL-QUERY ADAPTATION (not an obmark optimizer value)
+-- 3. HAMMERDB PARALLEL-QUERY TUNING
 -- The independent OceanBase category reuses MySQL query text, so the PX target
 -- alone does not enable parallel queries. Use public Auto DOP rather than private
 -- _force_parallel_query_dop. Start with an explicit DOP ceiling of 8; lower it
@@ -88,8 +85,8 @@ SHOW PARAMETERS WHERE name IN
 -- Keep them fixed for baseline comparisons; vary one knob at a time afterward.
 
 -- Preserve SQL Audit, performance events and trace diagnostics for analysis.
--- obmark also disables diagnostics, changes internal underscore parameters,
--- collations and plan-baseline capture/use. Those are not applied here, nor are
+-- Diagnostic disabling, internal underscore parameters, collations and
+-- plan-baseline capture/use changes are not applied here, nor are
 -- OBProxy, durability, replica topology, resource pools or existing table DDL.
 -- Public parameter references:
 -- https://www.oceanbase.com/docs/common-oceanbase-database-cn-1000000005285836

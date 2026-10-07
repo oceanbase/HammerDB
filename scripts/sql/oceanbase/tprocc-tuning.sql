@@ -1,6 +1,5 @@
 -- OceanBase MySQL tenant: executable HammerDB TPROC-C benchmark tuning.
--- Reference: obmark plugins/tpcc/4.4.2/optimize.py, local revision
--- 26d44a0488cf91e8ca64e1c956f84f991bcd1150.
+-- OceanBase tuning recommendations adapted for HammerDB TPROC-C.
 -- These are benchmark candidates, not measured HammerDB improvements or
 -- production defaults. Check parameter availability on your OceanBase version.
 -- Sourcing this file records current settings, then applies the profile below.
@@ -22,15 +21,14 @@ SHOW PARAMETERS WHERE name IN
    'default_auto_increment_mode', 'writing_throttling_trigger_percentage');
 
 -- 1. BUILD / STATISTICS COLLECTION
--- obmark uses 36000000000 us (10 hours) for both query and transaction timeout.
 -- Start with a bounded 600-second QUERY timeout for HammerDB builds/statistics;
--- this is a HammerDB example value, not the obmark value or a performance knob.
+-- this is a HammerDB example limit, not a performance knob.
 -- SET GLOBAL affects new connections; SET SESSION affects this SQL connection.
 -- HammerDB explicitly overrides ob_query_timeout in every connection, so also
 -- set Connection > Query timeout to 600 seconds, then reload the build driver.
 -- CLI equivalent BEFORE buildschema/loadscript:
 --   diset connection ob_query_timeout 600
--- For larger builds, select a measured limit rather than copying 10 hours.
+-- For larger builds, select a measured timeout limit.
 SET GLOBAL ob_query_timeout = 600000000;
 SET SESSION ob_query_timeout = 600000000;
 -- Only extend transaction timeout if a single transaction actually needs it;
@@ -38,7 +36,7 @@ SET SESSION ob_query_timeout = 600000000;
 -- SET GLOBAL ob_trx_timeout = 600000000;
 -- SET SESSION ob_trx_timeout = 600000000;
 
--- obmark build candidate: allow packets up to 64 MiB. Reconnect the loaders
+-- Build tuning candidate: allow packets up to 64 MiB. Reconnect the loaders
 -- after changing a global variable. This does not increase client-side limits.
 SET GLOBAL max_allowed_packet = 67108864;
 
@@ -56,39 +54,37 @@ SET GLOBAL max_allowed_packet = 67108864;
 -- Compare NOPM, response times, CPU, compaction and lock waits. To attribute
 -- a change, restore the baseline and test individual settings separately.
 
--- MemStore freeze threshold: obmark value 50 percent of the MemStore limit.
+-- MemStore freeze threshold candidate: 50 percent of the MemStore limit.
 -- Relative to the recorded baseline, raising this value delays freezes and
 -- lowering it triggers them sooner; memory pressure and background I/O change.
 ALTER SYSTEM SET freeze_trigger_percentage = 50;
 
--- obmark value 2 active workers per CPU quota. This may REDUCE concurrency.
+-- Concurrency candidate: 2 active workers per CPU quota. This may REDUCE concurrency.
 -- Check the captured workers_per_cpu_quota and keep it greater than this value.
--- This profile selects the obmark value; confirm its benefit with an A/B run.
+-- Confirm the benefit of this candidate with an A/B run.
 ALTER SYSTEM SET cpu_quota_concurrency = 2;
 
--- obmark disables early lock release; throughput and lock waits may change.
+-- Disable early lock release in this profile; throughput and lock waits may change.
 ALTER SYSTEM SET enable_early_lock_release = false;
 
--- obmark uses NOORDER and a 10,000,000-value auto-increment cache.
+-- Auto-increment candidates: NOORDER and a 10,000,000-value cache.
 -- Applies to auto-increment columns, not the explicit district.d_next_o_id
 -- sequence used to calculate HammerDB NOPM. IDs can have gaps / lack ordering.
 ALTER SYSTEM SET default_auto_increment_mode = 'NOORDER';
 SET GLOBAL auto_increment_cache_size = 10000000;
 
--- obmark value 100 defers write throttling until the MemStore threshold is
+-- A value of 100 defers write throttling until the MemStore threshold is
 -- reached. Consider ONLY with adequate memory/I/O headroom; this can increase
 -- the risk of exhausting MemStore. Keep throttling enabled for the baseline.
 -- ALTER SYSTEM SET writing_throttling_trigger_percentage = 100;
 
 -- 3. VALUES NOT INCLUDED IN THE EXECUTABLE PROFILE
--- obmark also uses ob_sql_work_area_percentage=80 and
--- parallel_servers_target=10000 during build. These are not sized for this
--- tenant. In particular, do not reuse them as TPROC-H parallel-query tuning:
--- choose SQL work-area memory and PX concurrency from tenant resources.
--- obmark disables SQL Audit/performance events/trace logs, changes OBProxy
--- logging/protocol/QoS settings, and changes private underscore parameters.
--- Those settings are deliberately omitted: retain diagnostics and proxy
--- metrics for node-load analysis, and validate version-specific internal
+-- Larger SQL work-area and PX queuing limits are not included because they
+-- must be sized for the tenant. Choose SQL work-area memory and PX concurrency
+-- from tenant resources, especially for TPROC-H parallel queries.
+-- SQL Audit/performance-event/trace-log disabling, OBProxy logging/protocol/QoS
+-- changes and private underscore parameters are deliberately omitted: retain
+-- diagnostics and proxy metrics for node-load analysis, and validate version-specific internal
 -- parameters separately. No durability, locality or replica changes here.
 
 -- 4. RESTORE / REPRODUCE
