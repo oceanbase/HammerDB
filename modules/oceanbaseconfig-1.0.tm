@@ -1,6 +1,26 @@
 # OceanBase defaults are applied after XML or SQLite loading. The shared XML
 # parser deliberately retains its existing handling of empty elements.
 namespace eval oceanbaseconfig {
+    proc save {configuration} {
+        package require sqlite3
+        sqlite3 ::oceanbaseconfig::savedb [CheckSQLiteDB oceanbase]
+        try {
+            savedb timeout 30000
+            savedb transaction {
+                dict for {group values} $configuration {
+                    if {$group ni {connection tpcc tpch}} {error "Unknown OceanBase configuration group: $group"}
+                    savedb eval "CREATE TABLE IF NOT EXISTS ${group}(key TEXT, val TEXT)"
+                    savedb eval "DELETE FROM ${group}"
+                    dict for {key value} $values {
+                        savedb eval "INSERT INTO ${group}(key,val) VALUES(\$key,\$value)"
+                    }
+                }
+            }
+        } finally {
+            savedb close
+        }
+    }
+
     proc initialize {configuration} {
         set normalized [normalize $configuration]
         if {$normalized ne $configuration} {

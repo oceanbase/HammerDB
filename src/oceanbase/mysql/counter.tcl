@@ -190,6 +190,8 @@ proc tcount_oceanbase_mysql {bm interval masterthread query_timeout} {
     #Setup Transaction Counter Connection Variables
     upvar #0 configmysql configmysql
     setlocaltcountvars $configmysql 1
+    set mysql_pass [::oceanbase::mysql::decode_password $mysql_pass]
+    set mysql_tpch_pass [::oceanbase::mysql::decode_password $mysql_tpch_pass]
     #If the options menu has been run under the GUI mysql_ssl_options is set
     #If build is run under the GUI, CLI or WS mysql_ssl_options is not set
     #Set it now if it doesn't exist

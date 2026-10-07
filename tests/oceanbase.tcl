@@ -221,8 +221,10 @@ test counter-start-arguments {Counter thread startup preserves empty and special
         }
         set dbdict {mysql {library mysqltcl}}
         set mysql_ssl_options {}
+        set quote_passwords false
     }
     $worker eval [list source [file join $root src generic gentccmn.tcl]]
+    $worker eval [list source [file join $root src oceanbase mysql runtime.tcl]]
     $worker eval [list source [file join $root src oceanbase mysql counter.tcl]]
 } -body {
     set results {}
@@ -466,6 +468,62 @@ select sum(d_next_o_id) from district}] "\n"] {
 } -cleanup {
     whcheck close
 } -result {240 10 600}
+
+
+test option-field-types {Text credentials named true/false do not become checkboxes} -body {
+    set results {}
+    foreach key {ob_pass ob_tpch_pass ob_user ob_tpch_user ob_dbase ob_tpch_dbase ob_host} {
+        lappend results [oceanbase::mysql::boolean_option $key]
+    }
+    foreach key {ob_ssl ob_no_stored_procs ob_raiseerror ob_refresh_on ob_tpch_optimized_schema} {
+        lappend results [oceanbase::mysql::boolean_option $key]
+    }
+    set results
+} -result {0 0 0 0 0 0 0 1 1 1 1 1}
+
+test options-save-atomic {Bound values preserve apostrophes and a later SQL failure rolls back all groups} -setup {
+    package require sqlite3
+    set state_file [makeFile {} ob-save-test.db]
+    rename CheckSQLiteDB saved_CheckSQLiteDB
+    proc CheckSQLiteDB {name} {return $::state_file}
+    set configuration [oceanbaseconfig::normalize [::XML::To_Dict [file join $root config oceanbase.xml]]]
+} -body {
+    dict set configuration tpcc ob_pass {it's a password}
+    dict set configuration connection ob_host {host'name}
+    oceanbaseconfig::save $configuration
+    sqlite3 checksave $state_file
+    set results [list [checksave onecolumn {SELECT val FROM tpcc WHERE key='ob_pass'}] \
+        [checksave onecolumn {SELECT val FROM connection WHERE key='ob_host'}]]
+    checksave eval {CREATE TRIGGER reject_password BEFORE INSERT ON tpcc
+        WHEN NEW.key='ob_pass' BEGIN SELECT RAISE(ABORT,'test failure'); END;}
+    dict set configuration connection ob_host changed
+    lappend results [catch {oceanbaseconfig::save $configuration}]
+    lappend results [checksave onecolumn {SELECT val FROM connection WHERE key='ob_host'}]
+    lappend results [checksave onecolumn {SELECT val FROM tpcc WHERE key='ob_pass'}]
+    set results
+} -cleanup {
+    checksave close
+    rename CheckSQLiteDB {}
+    rename saved_CheckSQLiteDB CheckSQLiteDB
+    removeFile ob-save-test.db
+} -result {{it's a password} host'name 1 host'name {it's a password}}
+
+test options-save-failure {GUI publishes new configuration and closes only after successful persistence} -setup {
+    set worker [interp create]
+    $worker eval [list source [file join $root src oceanbase mysql adapter.tcl]]
+    $worker eval {
+        set configoceanbase {tpcc {ob_pass old}}
+        set ::oceanbase::mysql::options(tpcc,ob_pass) new
+        namespace eval oceanbaseconfig {proc save {args} {error "disk failure"}}
+        namespace eval oceanbase {proc validate {args} {}}
+        proc quotemeta {value} {return $value}
+        proc tk_messageBox {args} {set ::message $args}
+        proc destroy {args} {set ::closed true}
+    }
+} -body {
+    $worker eval {oceanbase::mysql::save_options}
+    $worker eval {list [dict get $configoceanbase tpcc ob_pass] [info exists closed] [string match {*disk failure*} $message]}
+} -cleanup {interp delete $worker} -result {old 0 1}
 
 set failed $::tcltest::numTests(Failed)
 cleanupTests

@@ -1,5 +1,6 @@
 # Run inside HammerDB CLI: hammerdbcli auto tests/oceanbase-generated.tcl
 set argv {}
+set root [file dirname [file dirname [file normalize [info script]]]]
 package require tcltest 2
 namespace import ::tcltest::*
 dbset db ob
@@ -193,6 +194,72 @@ test schema-passwords {Generated C/H build/check/delete entries preserve empty a
     rename tk_messageBox {}
     if {$had_dialog} {rename saved_password_dialog tk_messageBox}
 } -result 1
+
+
+test workload-passwords {Real diset and C test/timed/H query drivers preserve password bytes} -setup {
+    set saved_ob $::configoceanbase
+    set saved_db $::rdbms
+} -body {
+    set results {}
+    dbset db ob
+    foreach {workload action} {tpcc test tpcc timed tpch test} {
+        foreach password [list {} {two words} {a;[error unsafe]$x} {double"quote} {back\nslash} {true} {false}] {
+            set key [expr {$workload eq "tpcc" ? "ob_pass" : "ob_tpch_pass"}]
+            diset $workload $key $password
+            oceanbase::mysql::generate $workload $action
+            set found 0
+            foreach line [split $::_ED(package) \n] {
+                if {[string match {set password *} $line]} {
+                    set worker [interp create]
+                    $worker eval $line
+                    lappend results [expr {[$worker eval {set password}] eq $password}]
+                    interp delete $worker
+                    incr found
+                }
+            }
+            if {!$found} {error "Missing password header"}
+        }
+    }
+    expr {0 ni $results && [llength $results] >= 21}
+} -cleanup {
+    set ::configoceanbase $saved_ob
+    set ::rdbms $saved_db
+} -result 1
+
+test counter-diset-passwords {Counter command after real diset contains decoded C and H credentials} -setup {
+    set saved_ob $::configoceanbase
+    set worker [interp create]
+    $worker eval {
+        namespace eval thread {
+            proc create {script} {return counter-worker}
+            proc send {args} {
+                set command [lindex $args end]
+                if {[lindex $command 0] eq "read_more"} {set ::counter_command $command}
+            }
+        }
+        set dbdict {mysql {library mysqltcl}}
+        set mysql_ssl_options {}
+        set quote_passwords true
+    }
+    foreach file {src/generic/gentccmn.tcl src/oceanbase/mysql/runtime.tcl src/oceanbase/mysql/counter.tcl} {
+        $worker eval [list source [file join $root $file]]
+    }
+} -body {
+    set results {}
+    dbset db ob
+    foreach password [list {} {two words} {a$b} {a;[error unsafe]$x} {double"quote} {back\nslash}] {
+        diset tpcc ob_pass $password
+        diset tpch ob_tpch_pass $password
+        $worker eval [list set configmysql [oceanbase::mysql::config $::configoceanbase]]
+        $worker eval {tcount_oceanbase_mysql TPC-C 10 main 120}
+        set command [$worker eval {set counter_command}]
+        lappend results [expr {[lindex $command 8] eq $password && [lindex $command 10] eq $password}]
+    }
+    set results
+} -cleanup {
+    interp delete $worker
+    set ::configoceanbase $saved_ob
+} -result {1 1 1 1 1 1}
 
 set failed $::tcltest::numTests(Failed)
 cleanupTests

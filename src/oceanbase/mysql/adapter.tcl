@@ -95,6 +95,9 @@ namespace eval oceanbase::mysql {
             if {$action in {build check delete}} {
                 set _ED(package) [rewrite_schema_entry $_ED(package) $workload $action [config $normalized]]
             }
+            if {$action in {test timed}} {
+                set _ED(package) [rewrite_workload_password $_ED(package) $workload [config $normalized]]
+            }
             if {$workload eq "tpch" && $action eq "build" && [dict get $normalized tpch ob_tpch_optimized_schema] eq "true"} {
                 set _ED(package) [rewrite_optimized_tproch $_ED(package) [dict get $normalized tpch ob_tpch_partition_count]]
             }
@@ -123,14 +126,19 @@ namespace eval oceanbase::mysql {
         set updated $configoceanbase
         foreach entry [array names options] {
             lassign [split $entry ,] group key
-            dict set updated $group $key $options($entry)
+            set value $options($entry)
+            if {$key in {ob_pass ob_tpch_pass}} {set value [quotemeta $value]}
+            dict set updated $group $key $value
         }
         if {[catch {::oceanbase::validate $updated} message]} {
             tk_messageBox -parent .oboptions -icon error -message $message
             return
         }
+        if {[catch {::oceanbaseconfig::save $updated} message]} {
+            tk_messageBox -parent .oboptions -icon error -message "Cannot save OceanBase options: $message"
+            return
+        }
         set configoceanbase $updated
-        Dict2SQLite oceanbase $configoceanbase
         destroy .oboptions
     }
 
@@ -141,6 +149,13 @@ namespace eval oceanbase::mysql {
         } else {
             $widget state disabled
         }
+    }
+
+    proc boolean_option {key} {
+        expr {$key in {ob_ssl ob_ssl_two_way ob_partition ob_distributed_schema
+            ob_prepared ob_no_stored_procs ob_raiseerror ob_keyandthink
+            ob_allwarehouse ob_timeprofile ob_tpch_optimized_schema
+            ob_raise_query_error ob_verbose ob_refresh_on ob_refresh_verbose}}
     }
 
     proc options {group option} {
@@ -168,6 +183,7 @@ namespace eval oceanbase::mysql {
                 if {$section eq "connection"} {set page connection} elseif {$key in $schema_keys} {set page schema} else {set page driver}
                 set frame .oboptions.tabs.$page
                 set i [incr row($page)]
+                if {$key in {ob_pass ob_tpch_pass}} {set value [decode_password $value]}
                 set options($section,$key) $value
                 set label [string totitle [string map {_ " "} [string range $key 3 end]]]
                 if {$key eq "ob_tpch_optimized_schema"} {set label "Distributed schema"}
@@ -175,7 +191,7 @@ namespace eval oceanbase::mysql {
                 ttk::label $frame.l$i -text $label
                 if {$key eq "ob_compatibility_mode"} {
                     ttk::combobox $frame.e$i -textvariable ::oceanbase::mysql::options($section,$key) -values [::oceanbase::supported_modes] -state readonly
-                } elseif {$value in {true false}} {
+                } elseif {[boolean_option $key]} {
                     ttk::checkbutton $frame.e$i -variable ::oceanbase::mysql::options($section,$key) -onvalue true -offvalue false
                 } elseif {$key eq "ob_driver"} {
                     ttk::combobox $frame.e$i -textvariable ::oceanbase::mysql::options($section,$key) -values {test timed} -state readonly

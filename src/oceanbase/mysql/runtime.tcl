@@ -1,5 +1,27 @@
 # Adapt only scripts generated for the OceanBase category.
 namespace eval oceanbase::mysql {
+    proc decode_password {value} {
+        # diset/GUI store quotemeta escapes. Decode only that alphabet, leaving
+        # literal backslashes (for example in a password containing \n) alone.
+        if {[info exists ::quote_passwords] && !$::quote_passwords} {return $value}
+        return [regsub -all {\\([][#$;{}])} $value {\1}]
+    }
+
+    proc rewrite_workload_password {script workload configuration} {
+        set key [expr {$workload eq "tpcc" ? "mysql_pass" : "mysql_tpch_pass"}]
+        set password [decode_password [dict get $configuration $workload $key]]
+        set lines [split $script \n]
+        set found 0
+        for {set i 0} {$i < [llength $lines]} {incr i} {
+            if {[regexp {^set password .*;# Password for the MySQL user$} [lindex $lines $i]]} {
+                lset lines $i "[list set password $password] ;# Password for the MySQL user"
+                incr found
+            }
+        }
+        if {!$found} {error "OceanBase adapter: missing workload password assignment"}
+        return [join $lines \n]
+    }
+
     proc rewrite_schema_entry {script workload action configuration} {
         set entry [dict get [dict create build do_$workload check check_$workload delete drop_schema] $action]
         set index [string last "\n$entry " $script]
@@ -12,7 +34,7 @@ namespace eval oceanbase::mysql {
         set encoded [quotemeta [dict get $configuration $workload $password_key]]
         # Decode the generator's backslash quoting without command or variable
         # substitution, then serialize all entry arguments as a Tcl list.
-        set password [subst -nocommands -novariables $encoded]
+        set password [decode_password [dict get $configuration $workload $password_key]]
         set database [dict get $configuration $workload $database_key]
         set original "$user $encoded $database"
         if {[string first $original $line] < 0} {error "OceanBase adapter: missing schema credentials"}
