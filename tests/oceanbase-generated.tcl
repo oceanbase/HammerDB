@@ -26,8 +26,8 @@ dbset bm TPROC-C
 diset tpcc ob_driver test
 diset tpcc ob_no_stored_procs true
 loadscript
-proc generated_password_assignment {script} {
-    set start [string first "\nset password " $script]
+proc generated_assignment {script {variable password}} {
+    set start [string first "\nset $variable " $script]
     if {$start < 0} {error "Missing password header"}
     set command ""
     foreach line [split [string range $script [expr {$start + 1}] end] \n] {
@@ -272,7 +272,7 @@ test workload-passwords {Real diset and C test/timed/H query drivers preserve pa
             diset $workload $key $password
             oceanbase::mysql::generate $workload $action
             set worker [interp create]
-            $worker eval [generated_password_assignment $::_ED(package)]
+            $worker eval [generated_assignment $::_ED(package)]
             lappend results [expr {[$worker eval {set password}] eq $password}]
             interp delete $worker
         }
@@ -281,6 +281,36 @@ test workload-passwords {Real diset and C test/timed/H query drivers preserve pa
 } -cleanup {
     set ::configoceanbase $saved_ob
     set ::rdbms $saved_db
+} -result 1
+
+test workload-usernames {Real C/H headers preserve accepted Tcl metacharacters in user/tenant/cluster} -setup {
+    set saved_ob $::configoceanbase
+} -body {
+    set results {}
+    dbset db ob
+    foreach {workload action} {tpcc test tpcc timed tpch test} {
+        set key [expr {$workload eq "tpcc" ? "ob_user" : "ob_tpch_user"}]
+        foreach cluster [list {} {cluster$tag}] {
+            dict set ::configoceanbase connection ob_tenant {tenant[injected]}
+            dict set ::configoceanbase connection ob_cluster $cluster
+            foreach user [list {bench$tag} {bench[injected]} {bench"quote} {bench\path} {bench;tag}] {
+                diset $workload $key $user
+                oceanbase::mysql::generate $workload $action
+                set worker [interp create]
+                $worker eval {
+                    set executed false
+                    proc injected {} {set ::executed true; return unwanted}
+                }
+                $worker eval [generated_assignment $::_ED(package) user]
+                set expected [expr {$cluster eq "" ? "$user@tenant\[injected\]" : "$cluster:tenant\[injected\]:$user"}]
+                lappend results [expr {[$worker eval {set user}] eq $expected && ![$worker eval {set executed}]}]
+                interp delete $worker
+            }
+        }
+    }
+    expr {0 ni $results && [llength $results] == 30}
+} -cleanup {
+    set ::configoceanbase $saved_ob
 } -result 1
 
 test counter-diset-passwords {Counter command after real diset contains decoded C and H credentials} -setup {

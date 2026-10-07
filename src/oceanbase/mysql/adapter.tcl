@@ -64,19 +64,27 @@ namespace eval oceanbase::mysql {
     }
 
     proc with_config {command args} {
-        global configmysql configoceanbase mysql_ssl_options
+        global configmysql configoceanbase mysql_ssl_options mysql_ssl_config
         set mapped [config $configoceanbase]
         set saved $configmysql
-        set had_ssl [info exists mysql_ssl_options]
-        if {$had_ssl} {set saved_ssl $mysql_ssl_options}
+        set saved_ssl {}
+        foreach name {mysql_ssl_options mysql_ssl_config} {
+            if {[info exists $name]} {dict set saved_ssl $name [set $name]}
+            unset -nocomplain $name
+        }
         set configmysql $mapped
-        unset -nocomplain mysql_ssl_options
         try {
             # Preserve schema-operation callers so GUI load_virtual uses the loader count.
             return [uplevel 1 [list $command {*}$args]]
         } finally {
             set configmysql $saved
-            if {$had_ssl} {set mysql_ssl_options $saved_ssl} else {unset -nocomplain mysql_ssl_options}
+            foreach name {mysql_ssl_options mysql_ssl_config} {
+                if {[dict exists $saved_ssl $name]} {
+                    set $name [dict get $saved_ssl $name]
+                } else {
+                    unset -nocomplain $name
+                }
+            }
         }
     }
 
@@ -96,7 +104,7 @@ namespace eval oceanbase::mysql {
                 set _ED(package) [rewrite_schema_entry $_ED(package) $workload $action [config $normalized]]
             }
             if {$action in {test timed}} {
-                set _ED(package) [rewrite_workload_password $_ED(package) $workload [config $normalized]]
+                set _ED(package) [rewrite_workload_credentials $_ED(package) $workload [config $normalized]]
             }
             if {$workload eq "tpch" && $action eq "build" && [dict get $normalized tpch ob_tpch_optimized_schema] eq "true"} {
                 set _ED(package) [rewrite_optimized_tproch $_ED(package) [dict get $normalized tpch ob_tpch_partition_count]]

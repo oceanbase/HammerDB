@@ -7,15 +7,22 @@ namespace eval oceanbase::mysql {
         return [regsub -all {\\([][#$;{}])} $value {\1}]
     }
 
-    proc rewrite_workload_password {script workload configuration} {
-        set key [expr {$workload eq "tpcc" ? "mysql_pass" : "mysql_tpch_pass"}]
-        set stored [dict get $configuration $workload $key]
+    proc rewrite_workload_credentials {script workload configuration} {
+        set user_key [expr {$workload eq "tpcc" ? "mysql_user" : "mysql_tpch_user"}]
+        set password_key [expr {$workload eq "tpcc" ? "mysql_pass" : "mysql_tpch_pass"}]
+        set user [dict get $configuration $workload $user_key]
+        set stored [dict get $configuration $workload $password_key]
         set password [decode_password $stored]
-        # Match the generator's complete assignment, including any newlines in
-        # its value. The original command need not be valid Tcl yet.
-        set original "set password \"[quotemeta $stored]\" ;# Password for the MySQL user"
-        if {[string first $original $script] < 0} {error "OceanBase adapter: missing workload password assignment"}
-        return [string map [list $original "[list set password $password] ;# Password for the MySQL user"] $script]
+        # Match complete generator assignments, including any newlines. Their
+        # interpolated values need not be valid Tcl before list serialization.
+        foreach {variable value generated comment} [list \
+            user $user $user {MySQL user} \
+            password $password [quotemeta $stored] {Password for the MySQL user}] {
+            set original "set $variable \"$generated\" ;# $comment"
+            if {[string first $original $script] < 0} {error "OceanBase adapter: missing workload $variable assignment"}
+            set script [string map [list $original "[list set $variable $value] ;# $comment"] $script]
+        }
+        return $script
     }
 
     proc rewrite_schema_entry {script workload action configuration} {

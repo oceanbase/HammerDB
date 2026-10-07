@@ -573,6 +573,129 @@ foreach initializer {geninit.tcl geninitcli.tcl geninitws.tcl} {
     } -result {ob {TPC-C TPC-H} {user's custom description} {user's custom description} ob 1}
 }
 
+test tls-cache-restore {Native TLS on -> OB off -> native off recomputes disabled options} -setup {
+    if {![llength [info commands check_mysql_ssl]]} {source [file join $root src mysql mysqlopt.tcl]}
+    set saved_native $::configmysql
+    set saved_ob $::configoceanbase
+    set ssl_globals {}
+    foreach name {mysql_ssl_options mysql_ssl_config} {
+        if {[info exists ::$name]} {dict set ssl_globals $name [set ::$name]}
+        unset -nocomplain ::$name
+    }
+    set native [::XML::To_Dict [file join $root config mysql.xml]]
+    foreach key {mysql_ssl_linux_capath mysql_ssl_windows_capath mysql_ssl_ca mysql_ssl_cert mysql_ssl_key} {
+        dict set native connection $key {}
+    }
+    dict set native connection mysql_ssl true
+    dict set native connection mysql_ssl_two_way false
+    set ::configmysql $native
+    set ::configoceanbase [oceanbaseconfig::normalize [::XML::To_Dict [file join $root config oceanbase.xml]]]
+    dict set ::configoceanbase connection ob_ssl false
+    proc check_ob_tls {} {check_mysql_ssl $::configmysql}
+} -body {
+    check_mysql_ssl $::configmysql
+    set original_options $::mysql_ssl_options
+    set original_key $::mysql_ssl_config
+    oceanbase::mysql::with_config check_ob_tls
+    set restored [expr {$::mysql_ssl_options eq $original_options && $::mysql_ssl_config eq $original_key}]
+    dict set ::configmysql connection mysql_ssl false
+    check_mysql_ssl $::configmysql
+    list $restored [dict get $::mysql_ssl_options -ssl]
+} -cleanup {
+    rename check_ob_tls {}
+    set ::configmysql $saved_native
+    set ::configoceanbase $saved_ob
+    foreach name {mysql_ssl_options mysql_ssl_config} {
+        unset -nocomplain ::$name
+        if {[dict exists $ssl_globals $name]} {set ::$name [dict get $ssl_globals $name]}
+    }
+} -result {1 false}
+
+test tls-cache-presence {Restore both cache values and prior absence on success and errors} -setup {
+    set worker [interp create]
+    $worker eval [list source [file join $root src oceanbase mysql adapter.tcl]]
+    $worker eval {
+        namespace eval oceanbase::mysql {proc config {value} {return $value}}
+        set configmysql native
+        set configoceanbase oceanbase
+        proc generator {fail} {
+            set ::mysql_ssl_options modified-options
+            set ::mysql_ssl_config modified-key
+            if {$fail} {error expected}
+        }
+    }
+} -body {
+    set results {}
+    foreach options_exists {0 1} {
+        foreach key_exists {0 1} {
+            foreach fail {0 1} {
+                $worker eval {unset -nocomplain mysql_ssl_options mysql_ssl_config}
+                if {$options_exists} {$worker eval {set mysql_ssl_options native-options}}
+                if {$key_exists} {$worker eval {set mysql_ssl_config native-key}}
+                set failed [catch {$worker eval [list oceanbase::mysql::with_config generator $fail]}]
+                lappend results [expr {$failed == $fail && [$worker eval {set configmysql}] eq "native" &&
+                    [$worker eval {info exists mysql_ssl_options}] == $options_exists &&
+                    [$worker eval {info exists mysql_ssl_config}] == $key_exists &&
+                    (!$options_exists || [$worker eval {set mysql_ssl_options}] eq "native-options") &&
+                    (!$key_exists || [$worker eval {set mysql_ssl_config}] eq "native-key")}]
+            }
+        }
+    }
+    expr {0 ni $results && [llength $results] == 8}
+} -cleanup {interp delete $worker} -result 1
+
+foreach initializer {geninit.tcl geninitcli.tcl geninitws.tcl} {
+    foreach saved {0 1} {
+        test public-defaults-$initializer-$saved {Fresh XML and saved configurations publish and persist required OB keys} -setup {
+            set worker [interp create]
+            set state_directory [makeDirectory defaults-$initializer-$saved]
+            set code [read [set fd [open [file join $root src generic $initializer]]]]
+            close $fd
+            set start [string first "#Load database details in dict named configdbname" $code]
+            set end [string first "#get_xml_data" $code $start]
+            set startup [string range $code $start [expr {$end - 1}]]
+            set raw [::XML::To_Dict [file join $root config oceanbase.xml]]
+            if {$saved} {dict set raw tpcc ob_pass saved-password}
+            $worker eval [list set auto_path $::auto_path]
+            $worker eval [list source [file join $root src generic genxml.tcl]]
+            $worker eval [list source [file join $root modules oceanbaseconfig-1.0.tm]]
+            $worker eval [list set state_directory $state_directory]
+            $worker eval [list set raw $raw]
+            $worker eval {
+                package require sqlite3
+                proc CheckSQLiteDB {name} {return [file join $::state_directory "$name.db"]}
+                namespace eval XML {proc To_Dict {args} {return $::raw}}
+                set dbdict {oceanbase {prefix ob}}
+                set dirname unused
+            }
+            if {$saved} {$worker eval {Dict2SQLite oceanbase $raw}}
+        } -body {
+            $worker eval $startup
+            set result [$worker eval {
+                sqlite3 checkdefaults [CheckSQLiteDB oceanbase]
+                set result [list [dict exists $configoceanbase connection ob_cluster] \
+                    [dict exists $configoceanbase tpcc ob_pass] [dict exists $configoceanbase tpch ob_tpch_pass] \
+                    [checkdefaults onecolumn {SELECT count(*) FROM connection WHERE key='ob_cluster'}] \
+                    [checkdefaults onecolumn {SELECT count(*) FROM tpcc WHERE key='ob_pass'}] \
+                    [checkdefaults onecolumn {SELECT count(*) FROM tpch WHERE key='ob_tpch_pass'}] \
+                    [expr {[dict get $configoceanbase tpcc ob_pass] eq [checkdefaults onecolumn {SELECT val FROM tpcc WHERE key='ob_pass'}]}]]
+                checkdefaults close
+                set result
+            }]
+            $worker eval $startup
+            lappend result [$worker eval {
+                expr {[dict get $configoceanbase tpcc ob_pass] eq \
+                    ([dict exists $raw tpcc ob_pass] ? [dict get $raw tpcc ob_pass] : "")}
+            }]
+            set result
+        } -cleanup {
+            $worker eval {catch {hdb close}}
+            interp delete $worker
+            removeDirectory defaults-$initializer-$saved
+        } -result {1 1 1 1 1 1 1 1}
+    }
+}
+
 set failed $::tcltest::numTests(Failed)
 cleanupTests
 if {$failed} {exit 1}
