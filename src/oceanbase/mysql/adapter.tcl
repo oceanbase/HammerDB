@@ -121,6 +121,15 @@ namespace eval oceanbase::mysql {
         destroy .oboptions
     }
 
+    proc update_partition_count_state {widget} {
+        variable options
+        if {$options(tpcc,ob_distributed_schema) eq "true"} {
+            $widget state !disabled
+        } else {
+            $widget state disabled
+        }
+    }
+
     proc options {group option} {
         global configoceanbase
         variable options
@@ -141,6 +150,8 @@ namespace eval oceanbase::mysql {
         dict for {section values} $configoceanbase {
             if {$section ni [list connection $group]} {continue}
             dict for {key value} $values {
+                # Keep the legacy key in saved configurations and CLI scripts.
+                if {$key eq "ob_partition"} {continue}
                 if {$section eq "connection"} {set page connection} elseif {$key in $schema_keys} {set page schema} else {set page driver}
                 set frame .oboptions.tabs.$page
                 set i [incr row($page)]
@@ -157,9 +168,15 @@ namespace eval oceanbase::mysql {
                     ttk::entry $frame.e$i -textvariable ::oceanbase::mysql::options($section,$key) -width 30
                     if {[string match *pass $key]} {$frame.e$i configure -show *}
                 }
+                if {$key eq "ob_distributed_schema"} {set distributed_widget $frame.e$i}
+                if {$key eq "ob_partition_count"} {set partition_count_widget $frame.e$i}
                 grid $frame.l$i -row $i -column 0 -sticky e -padx 5 -pady 2
                 grid $frame.e$i -row $i -column 1 -sticky ew -padx 5 -pady 2
             }
+        }
+        if {$group eq "tpcc"} {
+            $distributed_widget configure -command [list ::oceanbase::mysql::update_partition_count_state $partition_count_widget]
+            update_partition_count_state $partition_count_widget
         }
         if {$option eq "drive"} {.oboptions.tabs select .oboptions.tabs.driver}
         ttk::frame .oboptions.buttons
