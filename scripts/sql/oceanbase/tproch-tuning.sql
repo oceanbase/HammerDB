@@ -38,14 +38,12 @@ SET GLOBAL max_allowed_packet = 67108864;
 -- Work-area cap is 50% of tenant memory, shared by SQL operators, not 50% per
 -- query. Check memory pressure and spill activity, especially with multiple VUs.
 SET GLOBAL ob_sql_work_area_percentage = 50;
-SET SESSION ob_sql_work_area_percentage = 50;
 ALTER SYSTEM SET spill_compression_codec = 'LZ4';
 
 -- obmark's benchmark PX queuing target. This is a worker admission/queuing
 -- threshold per server, NOT a DOP or a command to start 10000 workers. It can
 -- substantially relax queuing; size it down for concurrent query streams.
 SET GLOBAL parallel_servers_target = 10000;
-SET SESSION parallel_servers_target = 10000;
 
 -- Applies to NEW tables without an explicit storage-format override. Existing
 -- TPROC-H tables are not converted. For a column-store comparison, apply before
