@@ -1,6 +1,7 @@
 # OBMark 4.4.2 MySQL TPC-H layout, adapted for HammerDB and modern OB tablegroups.
 # Source: plugins/tpch/4.4.2/create_tpch_mysql_table_part.ddl in oceanbase/obmark.
 # Keep loader/query column names; inserts use explicit column lists.
+# Keep HammerDB comment capacities (customer 118, supplier 102) for TEXT_1 output.
 namespace eval oceanbase::mysql {
     variable optimized_tproch_procedure {
 proc CreateOceanBaseHTables {mysql_handler database partition_count} {
@@ -77,7 +78,7 @@ partition by key(p_partkey) partitions $partition_count with column group(each c
   c_phone char(15) DEFAULT NULL,
   c_acctbal DECIMAL(15,2) DEFAULT NULL,
   c_mktsegment char(10) DEFAULT NULL,
-  c_comment varchar(117) DEFAULT NULL,
+  c_comment varchar(118) DEFAULT NULL,
   PRIMARY KEY (c_custkey)) row_format = condensed
 partition by key(c_custkey) partitions $partition_count with column group(each column)"
     mysqlexec $mysql_handler "CREATE TABLE SUPPLIER (
@@ -87,7 +88,7 @@ partition by key(c_custkey) partitions $partition_count with column group(each c
   s_nationkey INTEGER DEFAULT NULL,
   s_phone char(15) DEFAULT NULL,
   s_acctbal DECIMAL(12,2) DEFAULT NULL,
-  s_comment varchar(101) DEFAULT NULL,
+  s_comment varchar(102) DEFAULT NULL,
   PRIMARY KEY (s_suppkey)
 ) row_format = condensed  partition by key(s_suppkey) partitions $partition_count with column group(each column)"
     mysqlexec $mysql_handler "CREATE TABLE NATION (

@@ -364,8 +364,10 @@ test tproch-optimized-layout {OBMark layout groups join keys and explicitly uses
         [regexp -all {tablegroup =? ?hdb_tpch_h_orders_tg} $ddl] \
         [regexp -all {tablegroup =? ?hdb_tpch_h_parts_tg} $ddl] \
         [regexp {primary key\(l_shipdate, l_orderkey, l_linenumber\)} $ddl] \
-        [regexp {PRIMARY KEY \(o_orderkey, o_orderdate\)} $ddl]
-} -cleanup {interp delete $worker} -result {2 6 8 2 2 1 1}
+        [regexp {PRIMARY KEY \(o_orderkey, o_orderdate\)} $ddl] \
+        [regexp {c_comment varchar\(118\)} $ddl] \
+        [regexp {s_comment varchar\(102\)} $ddl]
+} -cleanup {interp delete $worker} -result {2 6 8 2 2 1 1 1 1}
 test tproch-optimized-rewrite {The optimized builder is available to generated workers} -body {
     set original {proc CreateTables {mysql_handler mysql_tpch_storage_engine} {}
 CreateTables $mysql_handler $mysql_tpch_storage_engine}

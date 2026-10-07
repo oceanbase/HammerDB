@@ -66,6 +66,8 @@ part key. The tablegroups use modern `SHARDING='PARTITION'` syntax rather than
 OBMark's legacy `BINDING` syntax. LINEITEM's primary key is
 `(l_shipdate,l_orderkey,l_linenumber)` and ORDERS' is `(o_orderkey,o_orderdate)`.
 Numeric types follow the OBMark layout, using MySQL `DECIMAL` for its `NUMBER` column.
+Customer and supplier comment lengths retain HammerDB's 118/102-character capacities
+so its existing data generator does not overflow OBMark's shorter columns.
 
 The default remains false for existing configurations. This option only affects
 new schema builds; it does not migrate existing tables. Use a fresh database and
