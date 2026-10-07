@@ -167,6 +167,8 @@ namespace eval oceanbase::mysql {
                 set i [incr row($page)]
                 set options($section,$key) $value
                 set label [string totitle [string map {_ " "} [string range $key 3 end]]]
+                if {$key eq "ob_tpch_optimized_schema"} {set label "Distributed schema"}
+                if {$key eq "ob_tpch_partition_count"} {set label "Partition count"}
                 ttk::label $frame.l$i -text $label
                 if {$key eq "ob_compatibility_mode"} {
                     ttk::combobox $frame.e$i -textvariable ::oceanbase::mysql::options($section,$key) -values [::oceanbase::supported_modes] -state readonly

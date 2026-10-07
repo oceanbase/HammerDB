@@ -51,7 +51,7 @@ off for ordinary validation; some queries return many values.
 
 ### Optional OBMark TPROC-H schema
 
-Enable `Tpch optimized schema` in the Schema tab, or configure:
+Enable `Distributed schema` in the TPROC-H Schema tab and set `Partition count`, or configure:
 
 ```tcl
 diset tpch ob_tpch_optimized_schema true
