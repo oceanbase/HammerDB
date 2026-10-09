@@ -84,6 +84,14 @@ LINEITEM retains its primary key `(L_ORDERKEY,L_LINENUMBER)`, and ORDERS retains
 `(O_ORDERKEY)`. Customer and supplier comments retain HammerDB's 118/102-character
 capacities, matching its existing data generator.
 
+The layout also adds a local covering index on LINEITEM
+`(L_SHIPDATE,L_PARTKEY,L_SUPPKEY,L_DISCOUNT,L_QUANTITY,L_EXTENDEDPRICE)`.
+It provides a date-range access path for Q6, Q14 and Q15 while preserving the
+order-key primary key and the existing secondary indexes. The additional index
+uses storage and must also be maintained during data loading and refreshes.
+For Q7, `scripts/sql/oceanbase/tproch-tuning.sql` includes a commented optional
+outline example to use this index after verifying the benefit on your workload.
+
 The default remains false for existing configurations. This option only affects
 new schema builds; it does not migrate existing tables. Use a fresh database and
 regenerate the build script. The partition count is independent of loader threads

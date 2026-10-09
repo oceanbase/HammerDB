@@ -94,6 +94,17 @@ proc OceanBaseHTableDDL {sql database partition_count} {
         mysqlexec $mysql_handler "CREATE TABLEGROUP IF NOT EXISTS $group SHARDING = 'PARTITION'"
     }
 }
+        # Preserve the native order-key primary key and add a covering date index
+        # for the LINEITEM date-range aggregations in Q6, Q14 and Q15.
+        set indexes {
+    mysqlexec $mysql_handler "CREATE INDEX HDB_LINEITEM_SHIPDATE_COVER_IDX
+        ON LINEITEM (L_SHIPDATE,L_PARTKEY,L_SUPPKEY,L_DISCOUNT,L_QUANTITY,L_EXTENDEDPRICE) LOCAL"
+}
+        # The native builder returns after creating the tables. Insert before
+        # that return so the index is created before any loader starts.
+        if {[regsub {(\n[ \t]*return[ \t]*\n?[ \t]*)$} $body "$indexes\\1" body] != 1} {
+            error "Cannot locate the end of the original MySQL TPROC-H table builder"
+        }
         set adapted [list proc CreateOceanBaseHTables \
             {mysql_handler mysql_tpch_storage_engine database partition_count} "$preamble$body"]
         set replacement "CreateOceanBaseHTables \$mysql_handler \$mysql_tpch_storage_engine \$db $partition_count"

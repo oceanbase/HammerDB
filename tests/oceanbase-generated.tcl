@@ -250,20 +250,22 @@ test tproch-optimized-build {Real TPROC-H generation extends native DDL only whe
     $worker eval {CreateTables handle InnoDB}
     set native [$worker eval {set ddl}]
     set preserved {}
-    foreach before $native after [lrange $distributed 2 end] {
+    foreach before $native after [lrange $distributed 2 9] {
         set before [string map $h_expected_types $before]
         lappend preserved [expr {[string range $after 0 [expr {[string length $before] - 1}]] eq $before}]
     }
     list [info complete $optimized] \
         [expr {[string first {CreateOceanBaseHTables $mysql_handler $mysql_tpch_storage_engine $db 12} $optimized] >= 0}] \
         [expr {[string first {proc CreateOceanBaseHTables} $plain] == -1}] \
-        [expr {[llength $native] == 8 && [llength $distributed] == 10 && 0 ni $preserved}]
+        [expr {[llength $native] == 8 && [llength $distributed] == 11 && 0 ni $preserved}] \
+        [regexp {^CREATE INDEX HDB_LINEITEM_SHIPDATE_COVER_IDX\s+ON LINEITEM \(L_SHIPDATE,L_PARTKEY,L_SUPPKEY,L_DISCOUNT,L_QUANTITY,L_EXTENDEDPRICE\) LOCAL$} [lindex $distributed end]] \
+        [expr {[string first {HDB_LINEITEM_SHIPDATE_COVER_IDX} [join $native \n]] == -1}]
 } -cleanup {
     interp delete $worker
     set ::configoceanbase $saved_ob
     rename tk_messageBox {}
     if {$had_dialog} {rename saved_h_dialog tk_messageBox}
-} -result {1 1 1 1}
+} -result {1 1 1 1 1 1}
 
 test tproch-native-after-distributed {Distributed generation leaves native MySQL schema generation unchanged} -setup {
     set saved_ob $::configoceanbase

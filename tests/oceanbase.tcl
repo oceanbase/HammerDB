@@ -390,18 +390,19 @@ test tproch-optimized-layout {OceanBase numeric adaptations preserve every other
     $worker eval $rewritten
     set distributed [$worker eval {set ddl}]
     set preserved {}
-    foreach before $native after [lrange $distributed 2 end] {
+    foreach before $native after [lrange $distributed 2 9] {
         set before [string map $h_expected_types $before]
         lappend preserved [expr {[string range $after 0 [expr {[string length $before] - 1}]] eq $before}]
     }
     set ddl [join $distributed \n]
-    list [expr {[llength $native] == 8 && [llength $distributed] == 10 && 0 ni $preserved}] \
+    list [expr {[llength $native] == 8 && [llength $distributed] == 11 && 0 ni $preserved}] \
         [regexp -all {SHARDING = 'PARTITION'} $ddl] \
         [regexp -all {PARTITIONS 12} $ddl] \
         [regexp -all {WITH COLUMN GROUP\(each column\)} $ddl] \
         [regexp -all {TABLEGROUP = hdb_tpch_h_orders_tg} $ddl] \
-        [regexp -all {TABLEGROUP = hdb_tpch_h_parts_tg} $ddl]
-} -cleanup {interp delete $worker} -result {1 2 6 8 2 2}
+        [regexp -all {TABLEGROUP = hdb_tpch_h_parts_tg} $ddl] \
+        [regexp {^CREATE INDEX HDB_LINEITEM_SHIPDATE_COVER_IDX\s+ON LINEITEM \(L_SHIPDATE,L_PARTKEY,L_SUPPKEY,L_DISCOUNT,L_QUANTITY,L_EXTENDEDPRICE\) LOCAL$} [lindex $distributed end]]
+} -cleanup {interp delete $worker} -result {1 2 6 8 2 2 1}
 
 test tproch-optimized-rewrite {The adapted builder is available to generated workers} -body {
     set rewritten [oceanbase::mysql::rewrite_optimized_tproch $h_native 12]
