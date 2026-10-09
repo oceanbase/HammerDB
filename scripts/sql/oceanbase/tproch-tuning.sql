@@ -84,6 +84,55 @@ SHOW PARAMETERS WHERE name IN
 -- Record SF, storage format, VUs, DOP/policy, topology, query times and Job ID.
 -- Keep them fixed for baseline comparisons; vary one knob at a time afterward.
 
+-- 5. OPTIONAL Q7 DATE-INDEX OUTLINE (DISABLED BY DEFAULT)
+-- Use only AFTER building a Distributed schema with the visible local index
+-- HDB_LINEITEM_SHIPDATE_COVER_IDX. First check statistics and compare the default
+-- plan against FORCE INDEX on the same data, SQL parameters and parallel policy.
+-- Enable only if the index path is faster and returns identical results.
+-- This pins one access path, not the entire plan. Recheck after changing SF,
+-- storage, concurrency or OceanBase version; remove it if it stops helping.
+-- All statements below are commented: sourcing this file creates no outline.
+-- Copy only the optional statements you need, remove their leading "-- ", and
+-- run as the SAME benchmark user in the configured TPROC-H database.
+-- Replace tpch below with that database. Run unmodified Q7 once before lookup.
+--
+-- USE tpch;
+-- SHOW INDEX FROM LINEITEM WHERE Key_name = 'HDB_LINEITEM_SHIPDATE_COVER_IDX';
+-- SELECT DISTINCT p.SQL_ID, p.STATEMENT
+-- FROM oceanbase.GV$OB_PLAN_CACHE_PLAN_STAT p
+-- WHERE p.DB_ID IN (SELECT DISTINCT DB_ID FROM oceanbase.GV$OB_SQL_AUDIT
+--                   WHERE DB_NAME = DATABASE())
+--   AND p.STATEMENT LIKE
+--       'select supp_nation, cust_nation, l_year, sum(volume) as revenue%'
+--   AND p.STATEMENT NOT LIKE '%FORCE INDEX%';
+--
+-- The SQL_ID below is an example for the current unmodified HammerDB Q7.
+-- Confirm it against the lookup above; replace it if your driver has another
+-- SQL_ID. Whitespace/query-text changes can change the ID; randomized nation
+-- literals parameterize to the same ID. The INDEX hint targets Q7's inner
+-- query block (SEL$2), where LINEITEM appears. This does not alter workload SQL.
+-- SQL_ID outlines override existing SQL hints: review them before binding.
+-- Do not replace an existing outline blindly; inspect DBA_OB_OUTLINES first.
+-- CREATE OUTLINE hdb_tpch_q7_shipdate_idx
+--   ON '66A9753020BE2145D4685DFA59BA7B85'
+--   USING HINT /*+ INDEX(@SEL$2 LINEITEM HDB_LINEITEM_SHIPDATE_COVER_IDX) */;
+--
+-- Rerun the original Q7 WITHOUT FORCE INDEX, then verify that the cached plan
+-- has this OUTLINE_ID and uses lineitem(HDB_LINEITEM_SHIPDATE_COVER_IDX).
+-- SELECT p.SVR_IP, p.PLAN_ID, p.SQL_ID, p.OUTLINE_ID, p.OUTLINE_DATA
+-- FROM oceanbase.GV$OB_PLAN_CACHE_PLAN_STAT p
+-- JOIN oceanbase.DBA_OB_OUTLINES o
+--   ON p.TENANT_ID = o.TENANT_ID AND p.DB_ID = o.DATABASE_ID
+--  AND p.OUTLINE_ID = o.OUTLINE_ID
+-- WHERE o.DATABASE_NAME = DATABASE()
+--   AND o.OUTLINE_NAME = 'hdb_tpch_q7_shipdate_idx';
+--
+-- Rollback: remove only this optional outline, then rerun Q7 and check its plan.
+-- DROP OUTLINE hdb_tpch_q7_shipdate_idx;
+-- References (OceanBase 4.4.2 CREATE OUTLINE and query-block INDEX hints):
+-- https://www.oceanbase.com/docs/common-oceanbase-database-cn-1000000005287850
+-- https://www.oceanbase.com/docs/common-oceanbase-database-cn-1000000005287286
+
 -- Preserve SQL Audit, performance events and trace diagnostics for analysis.
 -- Diagnostic disabling, internal underscore parameters, collations and
 -- plan-baseline capture/use changes are not applied here, nor are
