@@ -30,6 +30,14 @@ shared administrative password, SQL extension, and cluster parameter changes
 are not required. TLS settings are available in the connection configuration
 on Linux and Windows; enabling OceanBase does not disable TLS.
 
+OBProxy Service Name connections (`user@SERVICE:service_name`) are not supported
+by this category. The user fields accept only an unqualified username; tenant
+and cluster routing must use the separate connection fields above. For example,
+for user `a`, tenant `b`, cluster `c`, and service `d`, set the user to `a`,
+`ob_tenant` to `b`, and `ob_cluster` to `c`. This connects to the specified tenant
+and cluster, without Service Name routing or automatic routing to a new primary
+tenant after a tenant switchover.
+
 `ob_query_timeout` is in seconds and only changes the current database session.
 The default is 120 seconds, including schema statistics collection. It does not
 change the tenant's global timeout or SQL mode.
