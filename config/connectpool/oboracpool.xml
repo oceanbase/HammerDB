@@ -1,0 +1,18 @@
+<connpool>
+    <!-- Separate from the MySQL pool and the native Oracle pool.
+         Each connection inherits the active OB Oracle endpoint and credentials.
+         Optional overrides: ob_host, ob_port, ob_tenant, ob_cluster, instance,
+         tpcc_user and tpcc_pass. All entries must use the SAME tenant and schema.
+         Host/port overrides can target other observers or ODP for that tenant. -->
+    <connections>
+        <c1><inherit>true</inherit></c1>
+        <c2><inherit>true</inherit></c2>
+    </connections>
+    <sprocs>
+        <neworder><connections>c1 c2</connections><policy>round_robin</policy></neworder>
+        <payment><connections>c1 c2</connections><policy>round_robin</policy></payment>
+        <delivery><connections>c1 c2</connections><policy>round_robin</policy></delivery>
+        <stocklevel><connections>c1 c2</connections><policy>round_robin</policy></stocklevel>
+        <orderstatus><connections>c1 c2</connections><policy>round_robin</policy></orderstatus>
+    </sprocs>
+</connpool>

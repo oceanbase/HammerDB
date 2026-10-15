@@ -65,6 +65,40 @@ namespace eval oceanbase::oracle {
         return $script
     }
 
+    proc rewrite_distributed {script workload partitions owner} {
+        # Tablegroup metadata/creation requires the tenant administrator.
+        # Create it alongside the benchmark user, not in each loader session.
+        set original [procedure_definition $script CreateUser]
+        set body [lindex $original 3]
+        append body "\n::oceanbaseoracleschema::prepare \$lda $workload [list $owner]"
+        set script [string map [list $original [list proc CreateUser [lindex $original 2] $body]] $script]
+        foreach name {CreateTables CreateIndexes} {
+            set original [procedure_definition $script $name]
+            set execute {orasql $curn1 $sql($i)}
+            if {[string first $execute $original] < 0} {error "OceanBase distributed schema: missing $name DDL execution"}
+            if {$name eq "CreateTables"} {
+                set body [lindex $original 3]
+                set prepare "\n    [list set hdb_groups [::oceanbaseoracleschema::tablegroups $owner $workload]]\n"
+                set body "$prepare$body"
+                set replacement [list proc $name [lindex $original 2] [string map [list $execute \
+                    "orasql \$curn1 \[::oceanbaseoracleschema::table_ddl \$sql(\$i) $workload $partitions \$hdb_groups\]"] $body]]
+            } else {
+                set replacement [string map [list $execute \
+                    "orasql \$curn1 \[::oceanbaseoracleschema::index_ddl \$sql(\$i) $workload\]"] $original]
+                if {$workload eq "tpch"} {
+                    set body [lindex $replacement 3]
+                    set index {    orasql $curn1 "CREATE INDEX HDB_LINEITEM_SHIPDATE_COVER_IDX ON LINEITEM (L_SHIPDATE,L_PARTKEY,L_SUPPKEY,L_DISCOUNT,L_QUANTITY,L_EXTENDEDPRICE) LOCAL"}
+                    set end [string last {    oraclose $curn1} $body]
+                    if {$end < 0} {error "OceanBase distributed schema: missing index cursor close"}
+                    set body "[string range $body 0 [expr {$end-1}]]$index\n[string range $body $end end]"
+                    set replacement [list proc $name [lindex $original 2] $body]
+                }
+            }
+            set script [string map [list $original $replacement] $script]
+        }
+        return $script
+    }
+
     proc rewrite_monitor {script} {
         set switch_start [string first {switch $myposition} $script]
         set start [string first "    1 \{" $script $switch_start]
@@ -78,6 +112,7 @@ namespace eval oceanbase::oracle {
         if {![info complete $branch]} {error "OceanBase Oracle adapter: incomplete timed monitor branch"}
         set replacement {    1 {
         ::oceanbaseoraclecommon::monitor $connect $rampup $duration $totalvirtualusers $mode
+        tsv::set application abort 1
     }}
         return [string replace $script $start [expr {$start + [string length $branch] - 1}] $replacement]
     }
@@ -138,10 +173,24 @@ namespace eval oceanbase::oracle {
         set native [config $configuration]
         set marker {if [catch {package require $library} message] { error "Failed to load $library - $message" }}
         if {[string first $marker $script] < 0} {error "OceanBase Oracle adapter: missing native driver load"}
-        set setup "package require oceanbaseoraclecommon\n[list ::oceanbaseoraclecommon::configure [driver_settings $configuration] [dict get $native connection ob_query_timeout]]\n"
+        set pool [expr {$workload eq "tpcc" && $action in {test timed} && [dict get $native tpcc connect_pool] eq "true"}]
+        set setup [connection_setup $configuration $pool]
+        if {$pool} {
+            set original {set cpool [ get_connect_xml ora ]}
+            if {[string first $original $script] < 0} {error "OceanBase Oracle pool: missing native connection pool"}
+            set script [string map [list $original {set cpool [::oceanbaseoraclecommon::get_pool_config]}] $script]
+        }
+        if {$action eq "build" && [dict get $native $workload distributed_schema] eq "true"} {
+            append setup "package require oceanbaseoracleschema\n"
+        }
         set script [string map [list $marker "$setup$marker"] $script]
         set script [string map [list {oralogon } {::oceanbaseoraclecommon::logon }] $script]
-        if {$action eq "build"} {set script [rewrite_schema $script $workload]}
+        if {$action eq "build"} {
+            set script [rewrite_schema $script $workload]
+            if {[dict get $native $workload distributed_schema] eq "true"} {
+                set script [rewrite_distributed $script $workload [dict get $native $workload partition_count] [dict get $native $workload ${workload}_user]]
+            }
+        }
         if {$action eq "timed"} {set script [rewrite_monitor $script]}
         if {$workload eq "tpcc" && $action in {test timed}} {set script [rewrite_date_outputs $script]}
         if {$workload eq "tpch" && $action eq "test"} {set script [rewrite_refresh $script]}

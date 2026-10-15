@@ -1,9 +1,12 @@
 # OceanBase
 
 Select **OceanBase** in Benchmark Options, or use `dbset db ob` in
-the CLI. **Tenant Mode** selects MySQL or Oracle-compatible tenants. Switching
-to Oracle replaces the fields with the native Oracle-style Connection / Settings
-form. Each mode retains its own endpoint, credentials and workload settings.
+the CLI. **Tenant Mode** sits above the notebook and selects MySQL or
+Oracle-compatible tenants for the entire dialog. Switching modes updates both
+Connection and Settings while keeping the selected tab and each mode's unsaved
+inputs. OK saves the two independently configured profiles together; Cancel
+discards both drafts. The layouts use OceanBase's existing controls, including an
+editable TPROC-H Scale Factor, rather than reproducing native Oracle dialogs.
 The existing OceanBase option under MySQL remains available for compatibility.
 
 Oracle mode is new in this branch and requires the Linux OBCI setup below. Earlier
@@ -372,23 +375,56 @@ TPM includes tenant commits and rollbacks. Use a dedicated tenant for measuremen
 The H counter reports tenant SELECT activity, subtracting its own polls; it is
 not a count of completed benchmark query sets.
 
+Oracle mode uses OceanBase's **Distributed schema** and **Partition count**
+controls instead of Oracle's Partition Tables option. C warehouse tables are
+HASH-partitioned in one PARTITION-sharded tablegroup; ITEM is a duplicate table.
+Storage primary keys are created before loading and secondary CUSTOMER/ORDERS
+indexes are local. H colocates ORDERS/LINEITEM and PART/PARTSUPP in two tablegroups,
+partitions the six large tables, enables column groups, and adds the local
+LINEITEM ship-date covering index. Its eight primary keys and eight foreign keys
+are preserved. The tenant administrator creates tablegroups while creating the
+benchmark user; loader users do not need access to administrator metadata views.
+Ordinary schemas retain their existing layout. For example:
+
+```tcl
+diset tpcc ob_distributed_schema true
+diset tpcc ob_partition_count 24
+# After selecting TPROC-H:
+diset tpch ob_tpch_optimized_schema true
+diset tpch ob_tpch_partition_count 24
+```
+
+The same OB options map to each mode's independent profile. C **Cluster Connect
+Pool** uses `config/connectpool/oboracpool.xml`, separate from the MySQL and native
+Oracle pool files. Its default two connections inherit the active Oracle profile.
+Optional endpoint overrides can select another observer or ODP for the same
+tenant and benchmark schema. Each transaction type has its own connection list
+and routing policy (`round_robin`, `random`, `first_named`, `last_named`). Pool
+aliases are registered with OBCI before its first connection. Both synchronous
+and asynchronous generated drivers retain the pool routing and OB monitoring.
+
 Oracle mode does not expose MySQL engine/TLS fields, Oracle tablespaces, TimesTen,
-hash clusters, native Oracle partitioning, checkpoints or Cluster Connect Pool.
+hash clusters, native Oracle partitioning, checkpoints or Cloud Analytic Queries.
+Standard TPROC-H queries and refresh functions remain available.
 The stock Oratcl connection parser cannot represent `@` in passwords; this backend
 rejects those passwords explicitly. A loaded OCI client and OBCI TNS settings
 are fixed for that interpreter: restart HammerDB before changing endpoints or
 switching between a genuine Oracle client and OBCI. Oracle-mode Windows execution,
 TLS, OBProxy routing and OB Cloud connectivity have not been validated.
 
-Linux validation on the versions above passed 151 configuration, generation and
-Tk assertions, C/H schema checks, a one-warehouse C test/timed workload, and a
-fresh H SF1 build with all 65 VUs successful. All 22 H queries and one RF1/RF2
-refresh cycle completed. A mixed C transaction run under Valgrind reported zero
-memory-access errors after the DATE-output adaptation. The C Customer loading
-phase was rerun after its HISTORY binding correction; the full fresh C build
-was not repeated after that correction. These are functional integration checks,
-not controlled performance measurements. Async scaling and cloud analytic
-queries were covered by generation tests but were not exercised live.
+Linux validation on the versions above passed 180 configuration, generation and
+Tk assertions. Fresh distributed schemas completed a one-warehouse C build and
+an H SF1 build (all 65 VUs successful), followed by both schema checks. Database
+metadata confirmed the HASH partitions, tablegroups, primary/foreign keys and
+local secondary/covering indexes. All 22 H queries and one RF1/RF2 refresh cycle
+completed. C test/timed drivers, time profiling, all-warehouse routing and the
+synchronous and asynchronous connection pools completed real transactions,
+including verbose async login and transaction routing. The pooled timed driver
+also ran alongside a transaction counter that published 63 samples.
+These are functional integration checks, not controlled performance measurements.
+The Oracle test tenant used a single replica in one zone, and both pool sessions
+used the same endpoint; cross-observer placement, failover and scaling were not
+validated.
 
 ## Tenant-mode extension boundary
 

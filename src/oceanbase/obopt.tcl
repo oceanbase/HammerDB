@@ -32,11 +32,13 @@ namespace eval oceanbase {
         foreach {key native_key} {ob_driver ora_driver ob_count_ware count_ware ob_num_vu num_vu
             ob_allwarehouse allwarehouse ob_timeprofile ora_timeprofile ob_async_scale async_scale
             ob_rampup rampup ob_duration duration ob_total_iterations total_iterations
-            ob_user tpcc_user ob_pass tpcc_pass ob_raiseerror raiseerror ob_keyandthink keyandthink} {
+            ob_user tpcc_user ob_pass tpcc_pass ob_raiseerror raiseerror ob_keyandthink keyandthink
+            ob_distributed_schema distributed_schema ob_partition_count partition_count ob_connect_pool connect_pool} {
             dict set configuration tpcc $key [dict get $native tpcc $native_key]
         }
         foreach {key native_key} {ob_cloud_query cloud_query ob_scale_fact scale_fact
-            ob_num_tpch_threads num_tpch_threads ob_tpch_user tpch_user ob_tpch_pass tpch_pass} {
+            ob_num_tpch_threads num_tpch_threads ob_tpch_user tpch_user ob_tpch_pass tpch_pass
+            ob_tpch_optimized_schema distributed_schema ob_tpch_partition_count partition_count} {
             dict set configuration tpch $key [dict get $native tpch $native_key]
         }
         return $configuration

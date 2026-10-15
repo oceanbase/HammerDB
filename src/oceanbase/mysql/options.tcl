@@ -151,7 +151,10 @@ namespace eval oceanbase::mysql {
         variable options
         variable options_context
         variable option_widgets
-        set normalized [::oceanbaseconfig::normalize $configoceanbase]
+        set normalized [::oceanbaseconfig::normalize [::XML::To_Dict [file join [find_config_dir] oceanbase.xml]]]
+        dict for {section values} [::oceanbaseconfig::normalize $configoceanbase] {
+            dict set normalized $section [dict merge [dict get $normalized $section] $values]
+        }
         catch {destroy .oboptions}
         array unset options
         array unset option_widgets
@@ -206,6 +209,7 @@ namespace eval oceanbase::mysql {
         }
         catch {destroy .oboptions.notice}
         array unset option_widgets
+        set option_widgets(ob_compatibility_mode) .oboptions.mode.e1
         if {$options(connection,ob_compatibility_mode) eq "oracle"} {
             ::oceanbase::oracle::render_options $group $option
             return

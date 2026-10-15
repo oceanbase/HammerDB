@@ -62,6 +62,61 @@ test options-mode-switch {Selecting Oracle replaces MySQL fields in the same dia
         [.oboptions.tabs tab 0 -text] [.oboptions.tabs tab 1 -text]
 } -cleanup {destroy .oboptions} -result {1 1 1 0 Connection Settings}
 
+test options-mode-global {Tenant Mode is above the notebook and survives switches from Settings} -body {
+    set result {}
+    foreach group {tpcc tpch} {
+        foreach option {all drive} {
+            oceanbase::mysql::show_options $group $option
+            .oboptions.tabs select .oboptions.tabs.settings
+            set widget $::oceanbase::mysql::option_widgets(ob_compatibility_mode)
+            select_ob_mode oracle
+            lappend result [expr {[winfo parent $widget] eq ".oboptions.mode"}] \
+                [expr {[.oboptions.tabs select] eq ".oboptions.tabs.settings"}] \
+                [info exists ::oceanbase::mysql::option_widgets(system_user)] \
+                [expr {$option eq "drive" || [info exists ::oceanbase::mysql::option_widgets(partition_count)]}]
+            select_ob_mode mysql
+            lappend result [expr {$widget eq $::oceanbase::mysql::option_widgets(ob_compatibility_mode)}] \
+                [expr {[.oboptions.tabs select] eq ".oboptions.tabs.settings"}] \
+                [expr {![info exists ::oceanbase::mysql::option_widgets(system_user)]}]
+            destroy .oboptions
+        }
+    }
+    lsort -unique $result
+} -result 1
+
+test options-oracle-scope {OB controls replace Oracle physical-storage options and scale remains editable} -body {
+    oceanbase::mysql::show_options tpch all
+    select_ob_mode oracle
+    set scale $::oceanbase::mysql::option_widgets(scale_fact)
+    list [winfo class $scale] [$scale instate !readonly] \
+        [info exists ::oceanbase::mysql::option_widgets(distributed_schema)] \
+        [info exists ::oceanbase::mysql::option_widgets(cloud_query)] \
+        [info exists ::oceanbase::mysql::option_widgets(tpch_def_tab)]
+} -cleanup {destroy .oboptions} -result {TCombobox 1 1 0 0}
+
+test options-oracle-distribution {Oracle distribution controls follow the OB switch and retain separate drafts} -body {
+    oceanbase::mysql::show_options tpcc all
+    set ::oceanbase::mysql::options(tpcc,ob_partition_count) 8
+    select_ob_mode oracle
+    set before [$::oceanbase::mysql::option_widgets(partition_count) instate disabled]
+    $::oceanbase::mysql::option_widgets(distributed_schema) invoke
+    set ::oceanbase::mysql::options(oracle_tpcc,partition_count) 4
+    set after [$::oceanbase::mysql::option_widgets(partition_count) instate disabled]
+    select_ob_mode mysql
+    set mysql $::oceanbase::mysql::options(tpcc,ob_partition_count)
+    select_ob_mode oracle
+    list $before $after $mysql $::oceanbase::mysql::options(oracle_tpcc,partition_count)
+} -cleanup {destroy .oboptions} -result {1 0 8 4}
+
+test options-mode-legacy-profile {An Oracle-only legacy configuration can open the complete MySQL form without editing saved data} -body {
+    set configoceanbase {connection {ob_compatibility_mode oracle}}
+    set before $configoceanbase
+    oceanbase::mysql::show_options tpcc all
+    select_ob_mode mysql
+    list $::oceanbase::mysql::options(tpcc,ob_count_ware) $::oceanbase::mysql::options(tpcc,ob_pass) \
+        $::oceanbase::mysql::options(tpcc,ob_connect_pool) [expr {$configoceanbase eq $before}]
+} -cleanup {destroy .oboptions; set configoceanbase $baseline} -result {1 {} false 1}
+
 test options-mode-drafts {Switching modes retains both unsaved forms} -body {
     oceanbase::mysql::show_options tpcc all
     set ::oceanbase::mysql::options(tpcc,ob_user) mysql_draft
@@ -122,6 +177,47 @@ test options-oracle-endpoint {Each mode retains its own endpoint and tenant afte
         [dict get $active connection ob_tenant] [dict get $configoceanbase connection ob_host] \
         [dict get $configoceanbase connection ob_tenant]
 } -cleanup {destroy .oboptions; set configoceanbase $baseline} -result {oracle.example oracle_tenant mysql.example mysql_tenant}
+
+test options-profiles-save {One save persists two independent endpoint, credential and workload profiles} -body {
+    oceanbase::mysql::show_options tpcc all
+    set ::oceanbase::mysql::options(connection,ob_host) mysql.saved
+    set ::oceanbase::mysql::options(tpcc,ob_user) mysql_saved
+    set ::oceanbase::mysql::options(tpcc,ob_count_ware) 8
+    set ::oceanbase::mysql::options(tpcc,ob_partition_count) 8
+    select_ob_mode oracle
+    set ::oceanbase::mysql::options(oracle_connection,ob_host) oracle.saved
+    set ::oceanbase::mysql::options(oracle_tpcc,tpcc_user) oracle_saved
+    set ::oceanbase::mysql::options(oracle_tpcc,count_ware) 4
+    set ::oceanbase::mysql::options(oracle_tpcc,partition_count) 4
+    .oboptions.buttons.ok invoke
+    configobtpcc all
+    set result [list $::oceanbase::mysql::options(oracle_connection,ob_host) \
+        $::oceanbase::mysql::options(oracle_tpcc,tpcc_user) $::oceanbase::mysql::options(oracle_tpcc,count_ware) \
+        $::oceanbase::mysql::options(oracle_tpcc,partition_count)]
+    select_ob_mode mysql
+    lappend result $::oceanbase::mysql::options(connection,ob_host) $::oceanbase::mysql::options(tpcc,ob_user) \
+        $::oceanbase::mysql::options(tpcc,ob_count_ware) $::oceanbase::mysql::options(tpcc,ob_partition_count)
+    set result
+} -cleanup {destroy .oboptions; set configoceanbase $baseline} \
+    -result {oracle.saved oracle_saved 4 4 mysql.saved mysql_saved 8 8}
+
+test options-profiles-atomic {An invalid hidden profile cannot be saved while another mode is selected} -setup {
+    rename tk_messageBox real_profile_messageBox
+    proc tk_messageBox {args} {set ::profile_validation_message $args; return ok}
+} -body {
+    oceanbase::mysql::show_options tpcc all
+    select_ob_mode oracle
+    set ::oceanbase::mysql::options(oracle_tpcc,duration) 0
+    select_ob_mode mysql
+    .oboptions.buttons.ok invoke
+    list [winfo exists .oboptions] $::oceanbase::mysql::options(connection,ob_compatibility_mode) \
+        [expr {$configoceanbase eq $baseline}] [string match {*Oracle profile:*duration*} $::profile_validation_message]
+} -cleanup {
+    destroy .oboptions
+    rename tk_messageBox {}
+    rename real_profile_messageBox tk_messageBox
+    unset -nocomplain ::profile_validation_message
+} -result {1 oracle 1 1}
 
 test options-layout {Independent OB dialog follows native Connection/Settings layout} -body {
     oceanbase::mysql::show_options tpcc all

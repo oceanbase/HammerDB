@@ -101,6 +101,30 @@ test oracle-cli-options {CLI changes the active Oracle profile and preserves MyS
     set ::configoceanbase $saved_ob
     set ::rdbms $saved_rdbms
 } -result {oracle.example ora_cli 3 root 1}
+test oracle-distributed-cli-aliases {OB distribution options target the selected Oracle profile for both workloads} -setup {
+    set saved_ob $::configoceanbase
+    set saved_rdbms $::rdbms
+    rename ::oceanbaseconfig::save ::oceanbaseconfig::oracle_alias_test_save
+    proc ::oceanbaseconfig::save {args} {}
+    set ::configoceanbase $baseline
+    set ::rdbms OceanBase
+    dict set ::configoceanbase connection ob_compatibility_mode oracle
+} -body {
+    diset tpcc ob_distributed_schema true
+    diset tpcc ob_partition_count 4
+    diset tpch ob_tpch_optimized_schema true
+    diset tpch ob_tpch_partition_count 8
+    set active [oceanbase::active_config $::configoceanbase]
+    list [dict get $active tpcc ob_distributed_schema] [dict get $active tpcc ob_partition_count] \
+        [dict get $active tpch ob_tpch_optimized_schema] [dict get $active tpch ob_tpch_partition_count] \
+        [dict get $::configoceanbase tpcc ob_distributed_schema] [dict get $::configoceanbase tpch ob_tpch_partition_count]
+} -cleanup {
+    rename ::oceanbaseconfig::save {}
+    rename ::oceanbaseconfig::oracle_alias_test_save ::oceanbaseconfig::save
+    set ::configoceanbase $saved_ob
+    set ::rdbms $saved_rdbms
+} -result {true 4 true 8 false 24}
+
 test oracle-no-fallback {Oracle execution never silently uses the MySQL workload} -body {
     set ::configoceanbase $baseline
     dict set ::configoceanbase connection ob_compatibility_mode oracle

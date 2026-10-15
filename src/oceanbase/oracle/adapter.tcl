@@ -2,6 +2,9 @@
 if {[catch {package require oceanbaseoraclecommon}]} {
     source [file join [file dirname [info script]] .. .. .. modules oceanbaseoraclecommon-1.0.tm]
 }
+if {[catch {package require oceanbaseoracleschema}]} {
+    source [file join [file dirname [info script]] .. .. .. modules oceanbaseoracleschema-1.0.tm]
+}
 source [file join [file dirname [info script]] options.tcl]
 source [file join [file dirname [info script]] runtime.tcl]
 namespace eval oceanbase::oracle {
@@ -18,6 +21,17 @@ namespace eval oceanbase::oracle {
             [list [dict get $o system_user] [dict get $native tpcc tpcc_user] [dict get $native tpch tpch_user]]]
     }
 
+    proc connection_setup {configuration {pool false}} {
+        set native [config $configuration]
+        set command [list ::oceanbaseoraclecommon::configure [driver_settings $configuration] [dict get $native connection ob_query_timeout]]
+        if {$pool} {
+            set command [list ::oceanbaseoraclecommon::configure_pool [driver_settings $configuration] \
+                [dict get $native connection ob_query_timeout] [dict get $native tpcc tpcc_user] \
+                [::oceanbase::mysql::decode_password [dict get $native tpcc tpcc_pass]]]
+        }
+        return "package require oceanbaseoraclecommon\n$command\n"
+    }
+
     proc validate {configuration} {
         set native [config $configuration]
         ::oceanbaseoraclecommon::tns {*}[lrange [driver_settings $configuration] 1 end]
@@ -28,6 +42,7 @@ namespace eval oceanbase::oracle {
         }
         foreach {group key minimum maximum} {
             tpcc count_ware 1 100000 tpcc num_vu 1 512
+            tpcc partition_count 1 8192 tpch partition_count 1 8192
             tpcc total_iterations 1 2147483647 tpcc rampup 0 2147483647 tpcc duration 1 2147483647
             tpcc async_client 1 2147483647 tpcc async_delay 0 2147483647
             tpch num_tpch_threads 1 512 tpch total_querysets 1 2147483647
@@ -44,14 +59,15 @@ namespace eval oceanbase::oracle {
             }
         }
         if {[dict get $native tpcc async_scale] eq "true"} {dict set native tpcc keyandthink true}
-        foreach key {partition hash_clusters tpcc_tt_compat checkpoint connect_pool} {
+        foreach key {partition hash_clusters tpcc_tt_compat checkpoint} {
             if {[dict get $native tpcc $key] ne "false"} {error "OceanBase Oracle mode does not support $key"}
         }
         if {[dict get $native tpch tpch_tt_compat] ne "false"} {error "OceanBase Oracle mode does not support TimesTen"}
+        if {[dict get $native tpch cloud_query] ne "false"} {error "OceanBase Oracle mode uses the standard TPROC-H query set; disable cloud_query"}
         if {[dict get $native tpch scale_fact] ni {1 10 30 100 300 1000 3000 10000 30000 100000}} {error "Unsupported TPROC-H scale factor"}
         foreach group {connection tpcc tpch} {
             dict for {key value} [dict get $native $group] {
-                if {$key in {raiseerror keyandthink checkpoint partition hash_clusters tpcc_tt_compat allwarehouse ora_timeprofile async_scale async_verbose connect_pool tpch_tt_compat raise_query_error verbose refresh_on refresh_verbose cloud_query} && $value ni {true false}} {error "$key must be true or false"}
+                if {$key in {distributed_schema raiseerror keyandthink checkpoint partition hash_clusters tpcc_tt_compat allwarehouse ora_timeprofile async_scale async_verbose connect_pool tpch_tt_compat raise_query_error verbose refresh_on refresh_verbose cloud_query} && $value ni {true false}} {error "$key must be true or false"}
                 if {[string match *pass* $key] && [string first @ [::oceanbase::mysql::decode_password $value]] >= 0} {error "This Oratcl build cannot encode @ in a password; use an account with a different password"}
             }
         }
@@ -67,6 +83,9 @@ namespace eval oceanbase::oracle {
             set mapped [string range $key 3 end]
             if {$group eq "tpcc"} {
                 set aliases {user tpcc_user pass tpcc_pass driver ora_driver timeprofile ora_timeprofile}
+                if {[dict exists $aliases $mapped]} {set mapped [dict get $aliases $mapped]}
+            } elseif {$group eq "tpch"} {
+                set aliases {tpch_optimized_schema distributed_schema tpch_partition_count partition_count}
                 if {[dict exists $aliases $mapped]} {set mapped [dict get $aliases $mapped]}
             }
         }
@@ -95,7 +114,7 @@ namespace eval oceanbase::oracle {
     proc generate {workload action} {
         global configoceanbase _ED
         set commands {tpcc {build build_oratpcc test loadoratpcc timed loadtimedoratpcc check check_oratpcc delete delete_oratpcc}
-            tpch {build build_oratpch test loadoratpch cloud loadoracloud check check_oratpch delete delete_oratpch}}
+            tpch {build build_oratpch test loadoratpch check check_oratpch delete delete_oratpch}}
         if {![dict exists $commands $workload $action]} {error "Unsupported OceanBase Oracle operation: $workload $action"}
         with_config [dict get $commands $workload $action]
         set graphical [info exists ::tk_version]
@@ -112,11 +131,11 @@ namespace eval oceanbase::oracle {
     proc counter {bm interval masterthread} {
         global configoceanbase
         set body [info body ::tcount_ora]
-        set setup "package require oceanbaseoraclecommon\n[list ::oceanbaseoraclecommon::configure [driver_settings $configoceanbase] [dict get [config $configoceanbase] connection ob_query_timeout]]\n"
+        set native [config $configoceanbase]
+        set setup [connection_setup $configoceanbase [expr {$bm eq "TPC-C" && [dict get $native tpcc connect_pool] eq "true"}]]
         # The parent installs module paths before invoking read_more.
         set marker {set timeout 0}
         if {[string first $marker $body] < 0} {error "OceanBase Oracle adapter: missing native counter thread"}
-        set native [config $configoceanbase]
         set c [dict get $native connection]
         set connection "[dict get $c system_user]/[::oceanbase::mysql::decode_password [dict get $c system_password]]@hdb_ob_sys"
         set body [string map [list $marker "$setup$marker" {oralogon } {::oceanbaseoraclecommon::logon } \

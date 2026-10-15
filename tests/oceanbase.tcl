@@ -582,7 +582,10 @@ test options-save-failure {GUI publishes new configuration and closes only after
         set configoceanbase {connection {ob_compatibility_mode mysql} tpcc {ob_pass old}}
         set ::oceanbase::mysql::options(tpcc,ob_pass) new
         namespace eval oceanbaseconfig {proc save {args} {error "disk failure"}}
-        namespace eval oceanbase {proc validate {args} {}}
+        namespace eval oceanbase {
+            proc validate {args} {}
+            proc supported_modes {} {return {mysql oracle}}
+        }
         # This fixture isolates persistence failure; TLS validation has its own
         # tests and requires connection fields absent from this minimal fixture.
         namespace eval oceanbasecommon {proc ssl_options {args} {return {-ssl false}}}

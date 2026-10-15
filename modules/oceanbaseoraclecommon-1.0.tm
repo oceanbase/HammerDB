@@ -6,6 +6,8 @@ namespace eval oceanbaseoraclecommon {
     variable tns_file {}
     variable connection_options {}
     variable query_timeout 120
+    variable allowed_aliases {}
+    variable pool_configuration {}
 
     proc component {value label {empty false}} {
         if {(!$empty && $value eq "") || [regexp {[()=\s\x00]} $value]} {
@@ -69,7 +71,19 @@ namespace eval oceanbaseoraclecommon {
         variable query_timeout
         if {![string is integer -strict $timeout] || $timeout < 1 || $timeout > 86400} {error "Invalid OceanBase Oracle query timeout"}
         set query_timeout $timeout
-        set text [tns {*}[lrange $settings 1 end]]
+        variable allowed_aliases
+        set text [tns {*}[lrange $settings 1 6]]
+        set aliases {}
+        foreach user [lindex $settings 6] {lappend aliases hdb_ob_[string tolower $user]}
+        if {[llength $settings] > 7} {
+            foreach endpoint [lindex $settings 7] {
+                dict with endpoint {
+                    set descriptor [tns $host $port $tenant $cluster $service [list $user]]
+                    append text [string map [list hdb_ob_[string tolower $user] $alias] $descriptor]
+                    lappend aliases $alias
+                }
+            }
+        }
         if {$connection_options ne "" && $connection_options ne $settings} {
             error "OceanBase Oracle connection settings changed after driver initialization; start a new HammerDB process"
         }
@@ -90,16 +104,20 @@ namespace eval oceanbaseoraclecommon {
             return -options $options $message
         }
         set connection_options $settings
+        set allowed_aliases $aliases
         return $result
     }
 
-    proc connect {user password} {
+    proc connect {user password {alias {}}} {
         if {[string first @ $password] >= 0} {
             error "This Oratcl build cannot encode @ in a password; use an account with a different password"
         }
         if {![regexp {^[A-Za-z][A-Za-z0-9_$#]*$} $user]} {error "Invalid OceanBase Oracle user"}
         variable query_timeout
-        set lda [oralogon "$user/$password@hdb_ob_[string tolower $user]"]
+        variable allowed_aliases
+        if {$alias eq ""} {set alias hdb_ob_[string tolower $user]}
+        if {$alias ni $allowed_aliases} {error "Unknown OceanBase Oracle connection alias"}
+        set lda [oralogon "$user/$password@$alias"]
         set cursor [oraopen $lda]
         try {
             orasql $cursor "SET SESSION ob_query_timeout=[expr {wide($query_timeout)*1000000}]"
@@ -116,7 +134,62 @@ namespace eval oceanbaseoraclecommon {
         set slash [string first / $connection]
         set at [string first @ $connection]
         if {$slash < 1 || $at <= $slash} {error "Invalid generated OceanBase Oracle connection"}
-        return [connect [string range $connection 0 [expr {$slash-1}]] [string range $connection [expr {$slash+1}] [expr {$at-1}]]]
+        set alias [string range $connection [expr {$at+1}] end]
+        # Native schema builders use the future benchmark service name even
+        # for the administrator login, before that schema exists. Keep the
+        # configured per-user descriptor except for explicit pool routes.
+        if {![string match hdb_ob_pool_c? $alias]} {set alias {}}
+        return [connect [string range $connection 0 [expr {$slash-1}]] [string range $connection [expr {$slash+1}] [expr {$at-1}]] $alias]
+    }
+
+    proc pool_config {pool settings user password} {
+        if {![dict exists $pool connections] || ![dict exists $pool sprocs]} {error "OceanBase Oracle pool needs connections and sprocs"}
+        set endpoints {}
+        set connections {}
+        dict for {id values} [dict get $pool connections] {
+            if {![regexp {^c[1-9]$} $id]} {error "OceanBase Oracle pool connection IDs must be c1 to c9"}
+            set endpoint [dict create host [lindex $settings 1] port [lindex $settings 2] tenant [lindex $settings 3] \
+                cluster [lindex $settings 4] service [lindex $settings 5] user $user alias hdb_ob_pool_$id]
+            set pass $password
+            foreach {key mapped} {ob_host host ob_port port ob_tenant tenant ob_cluster cluster instance service tpcc_user user} {
+                if {[dict exists $values $key]} {dict set endpoint $mapped [dict get $values $key]}
+            }
+            if {[dict exists $values tpcc_pass]} {set pass [dict get $values tpcc_pass]}
+            # Every endpoint must target the same tenant and benchmark schema.
+            # Cluster Connect Pool routes transactions, not independent datasets.
+            foreach key {tenant cluster user} expected [list [lindex $settings 3] [lindex $settings 4] $user] {
+                if {![string equal -nocase [dict get $endpoint $key] $expected]} {error "OceanBase Oracle pool endpoints must use the same tenant, cluster and benchmark user"}
+            }
+            if {[string first @ $pass] >= 0} {error "This Oratcl build cannot encode @ in a pool password"}
+            tns [dict get $endpoint host] [dict get $endpoint port] [dict get $endpoint tenant] [dict get $endpoint cluster] \
+                [dict get $endpoint service] [list [dict get $endpoint user]]
+            lappend endpoints $endpoint
+            dict set connections $id [dict create tpcc_user [dict get $endpoint user] tpcc_pass $pass instance [dict get $endpoint alias]]
+        }
+        if {![llength $endpoints]} {error "OceanBase Oracle pool has no connections"}
+        foreach procedure {neworder payment delivery stocklevel orderstatus} {
+            if {![dict exists $pool sprocs $procedure connections] || ![dict exists $pool sprocs $procedure policy]} {error "Missing OceanBase Oracle pool routing for $procedure"}
+            set ids [dict get $pool sprocs $procedure connections]
+            if {![llength $ids]} {error "Empty OceanBase Oracle pool routing for $procedure"}
+            foreach id $ids {if {![dict exists $connections $id]} {error "Unknown OceanBase Oracle pool connection $id"}}
+            if {[dict get $pool sprocs $procedure policy] ni {first_named last_named random round_robin}} {error "Unknown OceanBase Oracle pool policy"}
+        }
+        return [list [dict replace $pool connections $connections] $endpoints]
+    }
+
+    proc configure_pool {settings timeout user password} {
+        variable pool_configuration
+        package require tpcccommon
+        set pool [::tpcccommon::get_connect_xml obora]
+        lassign [pool_config $pool $settings $user $password] pool endpoints
+        configure [linsert $settings end $endpoints] $timeout
+        set pool_configuration $pool
+    }
+
+    proc get_pool_config {} {
+        variable pool_configuration
+        if {$pool_configuration eq ""} {error "OceanBase Oracle pool was not configured"}
+        return $pool_configuration
     }
 
     proc rows {cursor sql} {

@@ -215,9 +215,17 @@ namespace eval oceanbase::mysql {
             dict set updated $group $key $value
         }
         dict set updated connection ob_oracle_options $oracle_options
-        if {[catch {::oceanbase::validate $updated} message]} {
-            tk_messageBox -parent .oboptions -icon error -message $message
-            return
+        # Both drafts are persisted together; validate both before publishing
+        # either profile so an invalid hidden tab cannot corrupt a saved mode.
+        foreach mode [::oceanbase::supported_modes] {
+            set candidate $updated
+            dict set candidate connection ob_compatibility_mode $mode
+            if {[catch {::oceanbase::validate $candidate} message]} {
+                set options(connection,ob_compatibility_mode) $mode
+                render_options
+                tk_messageBox -parent .oboptions -icon error -message "[string totitle $mode] profile: $message"
+                return
+            }
         }
         if {[dict get $updated connection ob_compatibility_mode] eq "mysql" && [catch {::oceanbasecommon::ssl_options $updated} message]} {
             tk_messageBox -parent .oboptions -icon error -message $message

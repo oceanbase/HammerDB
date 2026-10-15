@@ -11,7 +11,7 @@ set configoceanbase [oceanbaseconfig::normalize $configoceanbase]
 dict set configoceanbase connection ob_compatibility_mode oracle
 set baseline $configoceanbase
 try {
-    foreach {workload actions} {tpcc {build test timed check delete} tpch {build test cloud check delete}} {
+    foreach {workload actions} {tpcc {build test timed check delete} tpch {build test check delete}} {
         foreach action $actions {
             test oracle-generated-$workload-$action {Oracle scripts use OBCI with complete Tcl and native-category isolation} -body {
                 oceanbase::dispatch generate $workload $action
@@ -22,6 +22,66 @@ try {
             } -result {1 1 1 1 1}
         }
     }
+    foreach {driver async} {test false timed false timed true} {
+        test oracle-pool-$driver-$async {Pool generators preserve tenant routing, monitoring and native-category isolation} -body {
+            dict set configoceanbase connection ob_oracle_options [dict create tpcc [dict create ora_driver $driver async_scale $async connect_pool true]]
+            oceanbase::dispatch generate tpcc $driver
+            list [info complete $::_ED(package)] \
+                [expr {[string first {::oceanbaseoraclecommon::configure_pool} $::_ED(package)] >= 0}] \
+                [expr {[string first {::oceanbaseoraclecommon::get_pool_config} $::_ED(package)] >= 0}] \
+                [expr {[string first {get_connect_xml ora} $::_ED(package)] < 0}] \
+                [expr {[string first {dbms_workload_repository} $::_ED(package)] < 0}] \
+                [expr {$configoracle eq $original_ora}]
+        } -cleanup {set configoceanbase $baseline} -result {1 1 1 1 1 1}
+    }
+    foreach workload {tpcc tpch} {
+        test oracle-distributed-$workload {OB physical layout is opt-in and stays independent of native Oracle partition flags} -body {
+            dict set configoceanbase connection ob_oracle_options [dict create $workload {distributed_schema true partition_count 4}]
+            oceanbase::dispatch generate $workload build
+            list [info complete $::_ED(package)] \
+                [expr {[string first {package require oceanbaseoracleschema} $::_ED(package)] >= 0}] \
+                [expr {[string first {::oceanbaseoracleschema::table_ddl $sql($i)} $::_ED(package)] >= 0}] \
+                [expr {[string first {::oceanbaseoracleschema::index_ddl $sql($i)} $::_ED(package)] >= 0}] \
+                [expr {$configoracle eq $original_ora}]
+        } -cleanup {set configoceanbase $baseline} -result {1 1 1 1 1}
+    }
+    test oracle-async-pool-verbose {The standalone async pool login reports its own handle, not a per-route handle} -body {
+        dict set configoceanbase connection ob_oracle_options {tpcc {ora_driver timed connect_pool true async_scale true async_verbose true}}
+        oceanbase::dispatch generate tpcc timed
+        set login [string first {set mlda [ OracleLogon $connect mlda $timesten ]} $::_ED(package)]
+        set verbose [string first {puts "Connected $clientname:$mlda"} $::_ED(package) $login]
+        set pool [string first {set cpool [::oceanbaseoraclecommon::get_pool_config]} $::_ED(package) $login]
+        list [expr {$login >= 0 && $login < $verbose && $verbose < $pool}] \
+            [expr {[string first {puts "Connected $clientname:$lda"} [oceanbase::oracle::procedure_definition $::_ED(package) AsyncClientLogon]] >= 0}]
+    } -cleanup {set configoceanbase $baseline} -result {1 1}
+    foreach pool {false true} {
+        test oracle-timed-profile-$pool {Time profiling attaches after the OB monitor with VU counts initialized} -body {
+            dict set configoceanbase connection ob_oracle_options [dict create tpcc [dict create ora_driver timed connect_pool $pool ora_timeprofile true allwarehouse true]]
+            dbset db ob
+            dbset bm TPROC-C
+            loadscript
+            set position [string first {set rema [ lassign [ findvuposition ] myposition totalvirtualusers ]} $::_ED(package)]
+            set monitor [string first {::oceanbaseoraclecommon::monitor $connect} $::_ED(package)]
+            set profile [string first {xttimeproflog $totalvirtualusers $library} $::_ED(package)]
+            list [info complete $::_ED(package)] [expr {$position >= 0 && $position < $monitor && $monitor < $profile}]
+        } -cleanup {set configoceanbase $baseline} -result {1 1}
+    }
+    test oracle-pool-counter-setup {The counter and pooled drivers register the same descriptors before loading OBCI} -body {
+        dict set configoceanbase connection ob_oracle_options {tpcc {connect_pool true}}
+        set setup [oceanbase::oracle::connection_setup $configoceanbase true]
+        oceanbase::dispatch generate tpcc timed
+        expr {[string first $setup $::_ED(package)] >= 0 && [string first {configure_pool} $setup] >= 0}
+    } -cleanup {set configoceanbase $baseline} -result 1
+    test oracle-distributed-h-covering-index {The real H index builder executes the covering index before closing its cursor} -body {
+        dict set configoceanbase connection ob_oracle_options {tpch {distributed_schema true partition_count 4}}
+        oceanbase::dispatch generate tpch build
+        set definition [oceanbase::oracle::procedure_definition $::_ED(package) CreateIndexes]
+        set start [string first {CREATE INDEX HDB_LINEITEM_SHIPDATE_COVER_IDX} $definition]
+        list [expr {$start >= 0}] [expr {$start < [string last {oraclose $curn1} $definition]}]
+    } -cleanup {set configoceanbase $baseline} -result {1 1}
+    test oracle-no-cloud-query {Oracle mode does not silently select an alternative Oracle analytic workload} -body {
+        oceanbase::dispatch generate tpch cloud
+    } -returnCodes error -match glob -result {*Unsupported OceanBase Oracle operation*}
     test oracle-schema-physical-clauses {Only OceanBase scripts remove Oracle physical table options} -body {
         oceanbase::dispatch generate tpcc build
         set definition [oceanbase::oracle::procedure_definition $::_ED(package) CreateTables]
@@ -102,7 +162,7 @@ try {
     test oracle-credential-values {Special characters and newlines in passwords remain literal data in generated drivers} -body {
         set result {}
         foreach password [list {two words} {a;[error unsafe]$x} {double"quote} {back\nslash} "two\nlines"] {
-            foreach {workload action} {tpcc test tpcc timed tpch test tpch cloud} {
+            foreach {workload action} {tpcc test tpcc timed tpch test} {
                 set configoceanbase $baseline
                 dict set configoceanbase connection ob_oracle_options [dict create $workload [dict create ${workload}_pass [quotemeta $password]]]
                 oceanbase::dispatch generate $workload $action
