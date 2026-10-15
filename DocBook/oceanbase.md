@@ -2,10 +2,8 @@
 
 Select **OceanBase** in Benchmark Options, or use `dbset db ob` in
 the CLI. **Tenant Mode** selects MySQL or Oracle-compatible tenants. Switching
-to Oracle uses the native Oracle Connection / Settings labels, field order and
-control types. The additional **OceanBase** tab holds the endpoint, tenant,
-query timeout and OBCI library. Each mode retains its own endpoint, credentials
-and workload settings.
+to Oracle replaces the fields with the native Oracle-style Connection / Settings
+form. Each mode retains its own endpoint, credentials and workload settings.
 The existing OceanBase option under MySQL remains available for compatibility.
 
 Oracle mode is new in this branch and requires the Linux OBCI setup below. Earlier
@@ -374,14 +372,8 @@ TPM includes tenant commits and rollbacks. Use a dedicated tenant for measuremen
 The H counter reports tenant SELECT activity, subtracting its own polls; it is
 not a count of completed benchmark query sets.
 
-Oracle mode omits MySQL engine/TLS fields. Native Oracle tablespace, TimesTen,
-hash-cluster, partitioning, checkpoint and Cluster Connect Pool controls remain
-visible on their corresponding pages, disabled with support explanations. These
-features are not implemented by the OceanBase Oracle adapter; displaying their
-labels does not enable them. TPROC-H scale factors use the native radio-button
-layout. GUI regression tests compare all six C/H Schema, Build and Driver dialogs
-directly against the native Oracle renderer for label, order, page and control-type
-parity.
+Oracle mode does not expose MySQL engine/TLS fields, Oracle tablespaces, TimesTen,
+hash clusters, native Oracle partitioning, checkpoints or Cluster Connect Pool.
 The stock Oratcl connection parser cannot represent `@` in passwords; this backend
 rejects those passwords explicitly. A loaded OCI client and OBCI TNS settings
 are fixed for that interpreter: restart HammerDB before changing endpoints or
