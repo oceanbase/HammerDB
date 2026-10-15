@@ -192,7 +192,9 @@ namespace eval oceanbase::mysql {
         pack .oboptions.buttons.cancel .oboptions.buttons.ok -side right -padx 5 -pady 5
         pack .oboptions.buttons -fill x
         render_options
-        if {$option eq "drive" || $option eq "counter"} {.oboptions.tabs select .oboptions.tabs.settings}
+        if {$option eq "counter" || ($option eq "drive" && $options(connection,ob_compatibility_mode) ne "oracle")} {
+            .oboptions.tabs select .oboptions.tabs.settings
+        }
         wm geometry .oboptions +50+50
     }
 
@@ -204,7 +206,12 @@ namespace eval oceanbase::mysql {
         foreach frame {.oboptions.tabs.connection .oboptions.tabs.settings} {
             foreach child [winfo children $frame] {destroy $child}
         }
-        catch {destroy .oboptions.notice}
+        foreach widget {.oboptions.notice .oboptions.heading .oboptions.tabs.oceanbase} {catch {destroy $widget}}
+        foreach frame {.oboptions.tabs.connection .oboptions.tabs.settings} {
+            $frame configure -padding 8
+            .oboptions.tabs tab $frame -sticky nsew
+        }
+        pack configure .oboptions.tabs -pady 5
         array unset option_widgets
         if {$options(connection,ob_compatibility_mode) eq "oracle"} {
             ::oceanbase::oracle::render_options $group $option
