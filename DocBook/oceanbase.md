@@ -354,6 +354,69 @@ After selecting Oracle, `diset` accepts native Oracle option names, such as
 The original MySQL options and native Oracle category remain separate. The
 Oracle profile is persisted inside OceanBase's `connection.ob_oracle_options`.
 
+### Oracle-mode SSL
+
+Oracle mode provides the same SSL switch, One-Way / Two-Way selection, CA path,
+CA file, client certificate, private key and Cipher fields as OB MySQL mode.
+The two modes save their SSL settings independently. Schema builders, drivers,
+monitor sessions, transaction counters and every pool endpoint use the selected
+Oracle SSL policy. Pool endpoints cannot override that policy.
+
+The supplied OBCI 2.1.1.4 client exposes an SSL switch but calls libobclient
+without certificate arguments. Certificate selection therefore requires the
+private TLS client below. It links the OCI objects from the vendor archive and
+configures libobclient immediately before each connection. Native Oracle and
+MySQL clients are not modified, and the original `libobci.so` is preserved.
+Build on Linux x86-64 with the same Tcl 9 SDK as HammerDB:
+
+```sh
+sh scripts/tcl/oceanbase/oracle/build-obci-tls.sh \
+  /u01/obclient/lib/libobci.a /u01/obclient/lib \
+  /path/to/tcl/lib /path/to/tcl/include /path/to/private-obci-tls
+```
+
+The build requires the matching OBCI static archive, shared libobclient, Tcl
+headers/stub library, a C compiler and GNU binutils. It has been built against
+OBCI 2.1.1.4 and libobclient 2.2.14; revalidate when changing driver versions.
+Set **OBCI TLS Library** to the resulting `libhdbobcitls.so`. An empty setting
+looks beside the configured OBCI library; `OBCI_TLS_LIBRARY` supplies a startup
+default, and a saved profile takes precedence.
+
+```tcl
+diset connection obci_tls_library /path/to/private-obci-tls/libhdbobcitls.so
+diset connection ob_ssl_linux_capath /path/to/certificates
+diset connection ob_ssl_ca ca.pem
+diset connection ob_ssl true
+# For mutual authentication, also select the client certificate and key:
+diset connection ob_ssl_cert client-cert.pem
+diset connection ob_ssl_key client-key.pem
+diset connection ob_ssl_two_way true
+```
+
+A CA file enables server-certificate and hostname verification. When CA is
+empty, CApath can name an OpenSSL hashed trust directory (`openssl rehash`).
+Clearing both allows encrypted transport without server-identity verification.
+Two-Way additionally sends the selected client certificate and private key.
+`server` leaves the cipher selection to the client/server defaults. Requested
+SSL is mandatory: missing TLS support, a failed handshake, invalid certificates
+or a rejected cipher do not retry in plaintext. Restart HammerDB after changing
+SSL policy or the loaded client library; all worker interpreters must agree on
+one SSL policy for that process.
+
+Local transport validation uses the real corrected Oratcl, OBCI and libobclient
+against a loopback protocol fixture with temporary certificates:
+
+```sh
+python3 tests/oracle-tls-wire.py /path/to/hammerdbcli /path/to/libhdbobcitls.so
+```
+
+The fixture deliberately rejects database authentication after inspecting TLS.
+Its checks cover one-way, encryption-only, mutual and threaded mutual TLS,
+CA directories, wrong CA/hostname, missing client certificate, mismatched key,
+invalid cipher and a server without TLS. This verifies transport, not database
+queries or benchmark execution. OB Cloud Oracle SSL workload validation remains
+pending until a test tenant and its CA certificate are available.
+
 Schema builders retain native logical tables, keys and procedures, removing
 Oracle-specific physical storage clauses. H primary keys are created directly,
 without Oracle's precreated unique-index attachment or deferred-constraint
@@ -403,16 +466,17 @@ and routing policy (`round_robin`, `random`, `first_named`, `last_named`). Pool
 aliases are registered with OBCI before its first connection. Both synchronous
 and asynchronous generated drivers retain the pool routing and OB monitoring.
 
-Oracle mode does not expose MySQL engine/TLS fields, Oracle tablespaces, TimesTen,
+Oracle mode does not expose MySQL engine fields, Oracle tablespaces, TimesTen,
 hash clusters, native Oracle partitioning, checkpoints or Cloud Analytic Queries.
 Standard TPROC-H queries and refresh functions remain available.
 The stock Oratcl connection parser cannot represent `@` in passwords; this backend
 rejects those passwords explicitly. A loaded OCI client and OBCI TNS settings
 are fixed for that interpreter: restart HammerDB before changing endpoints or
 switching between a genuine Oracle client and OBCI. Oracle-mode Windows execution,
-TLS, OBProxy routing and OB Cloud connectivity have not been validated.
+SSL workloads against a real tenant, OBProxy routing and OB Cloud connectivity
+have not been validated.
 
-Linux validation on the versions above passed 180 configuration, generation and
+Linux validation on the versions above passed 192 configuration, generation and
 Tk assertions. Fresh distributed schemas completed a one-warehouse C build and
 an H SF1 build (all 65 VUs successful), followed by both schema checks. Database
 metadata confirmed the HASH partitions, tablegroups, primary/foreign keys and

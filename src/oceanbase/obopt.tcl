@@ -26,7 +26,8 @@ namespace eval oceanbase {
     proc active_config {configuration} {
         if {[backend $configuration] ne "::oceanbase::oracle"} {return $configuration}
         set native [::oceanbaseconfig::oracle_options $configuration]
-        foreach key {ob_host ob_port ob_tenant ob_cluster ob_query_timeout} {
+        foreach key {ob_host ob_port ob_tenant ob_cluster ob_query_timeout ob_ssl ob_ssl_two_way
+            ob_ssl_linux_capath ob_ssl_windows_capath ob_ssl_ca ob_ssl_cert ob_ssl_key ob_ssl_cipher} {
             dict set configuration connection $key [dict get $native connection $key]
         }
         foreach {key native_key} {ob_driver ora_driver ob_count_ware count_ware ob_num_vu num_vu

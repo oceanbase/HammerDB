@@ -290,6 +290,23 @@ test options-tls-controls {TLS CA and mutual-authentication controls follow SSL 
         [$::oceanbase::mysql::option_widgets(ob_ssl_cert) instate disabled]
 } -cleanup {destroy .oboptions} -result {1 0 0}
 
+test options-oracle-tls-controls {Oracle uses the same SSL controls with independent drafts and callbacks} -body {
+    oceanbase::mysql::show_options tpcc build
+    set ::oceanbase::mysql::options(connection,ob_ssl_ca) mysql-ca.pem
+    select_ob_mode oracle
+    set before [$::oceanbase::mysql::option_widgets(ob_ssl_ca) instate disabled]
+    $::oceanbase::mysql::option_widgets(ob_ssl) invoke
+    set one_way [$::oceanbase::mysql::option_widgets(ob_ssl_cert) instate disabled]
+    $::oceanbase::mysql::option_widgets(ob_ssl_two_way).true invoke
+    set two_way [$::oceanbase::mysql::option_widgets(ob_ssl_cert) instate disabled]
+    set ::oceanbase::mysql::options(oracle_connection,ob_ssl_ca) oracle-ca.pem
+    select_ob_mode mysql
+    set mysql $::oceanbase::mysql::options(connection,ob_ssl_ca)
+    select_ob_mode oracle
+    list $before $one_way $two_way $mysql $::oceanbase::mysql::options(oracle_connection,ob_ssl_ca) \
+        [$::oceanbase::mysql::option_widgets(obci_tls_library) instate disabled]
+} -cleanup {destroy .oboptions} -result {1 1 0 mysql-ca.pem oracle-ca.pem 0}
+
 test options-refresh-controls {Refresh function enables update count, delay and verbose controls} -body {
     oceanbase::mysql::show_options tpch drive
     set before [$::oceanbase::mysql::option_widgets(ob_update_sets) instate disabled]
