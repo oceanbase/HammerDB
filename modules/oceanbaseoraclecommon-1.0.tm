@@ -65,43 +65,13 @@ namespace eval oceanbaseoraclecommon {
         return $version
     }
 
-    proc ssl_options {connection} {
-        package require oceanbasecommon
-        foreach key {ob_ssl ob_ssl_two_way} {
-            if {[dict get $connection $key] ni {true false}} {error "$key must be true or false"}
-        }
-        set ssl [::oceanbasecommon::ssl_options [dict create connection $connection]]
-        if {[dict get $ssl -ssl] eq "true"} {
-            set library [dict get $connection obci_tls_library]
-            if {$library eq ""} {set library [file join [file dirname [dict get $connection obci_library]] libhdbobcitls.so]}
-            dict set ssl -library $library
-        }
-        return $ssl
-    }
-
-    proc configure {settings {timeout 120} {ssl {-ssl false}}} {
+    proc configure {settings {timeout 120}} {
         variable connection_options
         variable tns_file
         variable query_timeout
         if {![string is integer -strict $timeout] || $timeout < 1 || $timeout > 86400} {error "Invalid OceanBase Oracle query timeout"}
         set query_timeout $timeout
         variable allowed_aliases
-        set signature [list $settings $ssl]
-        if {$connection_options ne "" && $connection_options ne $signature} {
-            error "OceanBase Oracle connection or SSL settings changed after driver initialization; start a new HammerDB process"
-        }
-        set library [lindex $settings 0]
-        if {[dict get $ssl -ssl] eq "true"} {
-            set library [file normalize [dict get $ssl -library]]
-            if {![file isfile $library] || ![file readable $library]} {
-                error "OBCI TLS client is not readable: $library. Build it with scripts/tcl/oceanbase/oracle/build-obci-tls.sh and set obci_tls_library."
-            }
-            if {[package provide Oratcl] ne "" && $::oceanbaseoraclecommon::driver_library ne $library} {
-                error "Oratcl is already loaded with another client; restart HammerDB before changing SSL"
-            }
-            load $library Hdbobcitls
-            ::hdbobcitls::configure [dict remove $ssl -library]
-        }
         set text [tns {*}[lrange $settings 1 6]]
         set aliases {}
         foreach user [lindex $settings 6] {lappend aliases hdb_ob_[string tolower $user]}
@@ -114,6 +84,9 @@ namespace eval oceanbaseoraclecommon {
                 }
             }
         }
+        if {$connection_options ne "" && $connection_options ne $settings} {
+            error "OceanBase Oracle connection settings changed after driver initialization; start a new HammerDB process"
+        }
         if {$tns_file eq ""} {
             set channel [file tempfile tns_file [file join [expr {[info exists ::env(TMPDIR)] ? $::env(TMPDIR) : [pwd]}] hdb-obci-]]
             try {puts -nonewline $channel $text} finally {close $channel}
@@ -121,7 +94,7 @@ namespace eval oceanbaseoraclecommon {
         }
         set ::env(OBCI_TNS_FILE) $tns_file
         try {
-            set result [load_driver $library]
+            set result [load_driver [lindex $settings 0]]
         } on error {message options} {
             # A retry after fixing a missing library must not reuse an old
             # tenant descriptor if the user has also edited the connection.
@@ -130,7 +103,7 @@ namespace eval oceanbaseoraclecommon {
             unset -nocomplain ::env(OBCI_TNS_FILE)
             return -options $options $message
         }
-        set connection_options $signature
+        set connection_options $settings
         set allowed_aliases $aliases
         return $result
     }
@@ -144,12 +117,7 @@ namespace eval oceanbaseoraclecommon {
         variable allowed_aliases
         if {$alias eq ""} {set alias hdb_ob_[string tolower $user]}
         if {$alias ni $allowed_aliases} {error "Unknown OceanBase Oracle connection alias"}
-        if {[catch {set lda [oralogon "$user/$password@$alias"]} message options]} {
-            if {[llength [info commands ::hdbobcitls::last_error]] && [::hdbobcitls::last_error] ne ""} {
-                set message "OceanBase Oracle SSL: [::hdbobcitls::last_error]"
-            }
-            return -options $options $message
-        }
+        set lda [oralogon "$user/$password@$alias"]
         set cursor [oraopen $lda]
         try {
             orasql $cursor "SET SESSION ob_query_timeout=[expr {wide($query_timeout)*1000000}]"
@@ -209,12 +177,12 @@ namespace eval oceanbaseoraclecommon {
         return [list [dict replace $pool connections $connections] $endpoints]
     }
 
-    proc configure_pool {settings timeout user password {ssl {-ssl false}}} {
+    proc configure_pool {settings timeout user password} {
         variable pool_configuration
         package require tpcccommon
         set pool [::tpcccommon::get_connect_xml obora]
         lassign [pool_config $pool $settings $user $password] pool endpoints
-        configure [linsert $settings end $endpoints] $timeout $ssl
+        configure [linsert $settings end $endpoints] $timeout
         set pool_configuration $pool
     }
 

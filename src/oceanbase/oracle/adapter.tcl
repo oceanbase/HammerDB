@@ -29,14 +29,12 @@ namespace eval oceanbase::oracle {
                 [dict get $native connection ob_query_timeout] [dict get $native tpcc tpcc_user] \
                 [::oceanbase::mysql::decode_password [dict get $native tpcc tpcc_pass]]]
         }
-        lappend command [::oceanbaseoraclecommon::ssl_options [dict get $native connection]]
         return "package require oceanbaseoraclecommon\n$command\n"
     }
 
     proc validate {configuration} {
         set native [config $configuration]
         ::oceanbaseoraclecommon::tns {*}[lrange [driver_settings $configuration] 1 end]
-        ::oceanbaseoraclecommon::ssl_options [dict get $native connection]
         foreach group {tpcc tpch} {
             if {[string toupper [dict get $native $group ${group}_user]] in {SYS SYSTEM PUBLIC LBACSYS ORAAUDITOR}} {
                 error "Choose a separate OceanBase Oracle benchmark user"

@@ -58,7 +58,7 @@ namespace eval oceanbase::mysql {
             sslmode {
                 ttk::frame $widget
                 foreach {value text} {false {SSL One-Way} true {SSL Two-Way}} {
-                    ttk::radiobutton $widget.$value -text $text -value $value -variable $valuevar -command [list $callback $key]
+                    ttk::radiobutton $widget.$value -text $text -value $value -variable $valuevar -command [list ::oceanbase::mysql::option_changed $key]
                     pack $widget.$value -side left -padx 2
                 }
             }
