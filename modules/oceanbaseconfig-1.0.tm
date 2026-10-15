@@ -1,6 +1,37 @@
 # OceanBase defaults are applied after XML or SQLite loading. The shared XML
 # parser deliberately retains its existing handling of empty elements.
 namespace eval oceanbaseconfig {
+    proc oracle_options {configuration} {
+        # Keep Oracle options inside the OceanBase category, independently of
+        # both its MySQL options and the native Oracle category.
+        set defaults {
+            connection {instance {} system_user sys system_password {} obci_library /u01/obclient/lib/libobci.so}
+            tpcc {tpcc_user tpcc tpcc_pass {} tpcc_def_tab users tpcc_ol_tab users tpcc_def_temp temp
+                count_ware 1 num_vu 1 partition false hash_clusters false tpcc_tt_compat false
+                total_iterations 10000000 raiseerror true keyandthink false checkpoint false
+                ora_driver timed rampup 2 duration 5 allwarehouse false ora_timeprofile false
+                async_scale false async_client 10 async_verbose false async_delay 1000 connect_pool false}
+            tpch {tpch_user tpch tpch_pass {} tpch_def_tab users tpch_def_temp temp num_tpch_threads 1
+                tpch_tt_compat false scale_fact 1 total_querysets 1 raise_query_error true verbose false
+                degree_of_parallel 2 refresh_on false update_sets 1 trickle_refresh 1000
+                refresh_verbose false cloud_query false}
+        }
+        if {[info exists ::env(OBCI_LIBRARY)] && $::env(OBCI_LIBRARY) ne ""} {
+            dict set defaults connection obci_library $::env(OBCI_LIBRARY)
+        }
+        foreach {key value} {ob_host 127.0.0.1 ob_port 2881 ob_tenant {} ob_cluster {} ob_query_timeout 120} {
+            if {[dict exists $configuration connection $key]} {set value [dict get $configuration connection $key]}
+            dict set defaults connection $key $value
+        }
+        if {[dict exists $configuration connection ob_oracle_options]} {
+            dict for {group values} [dict get $configuration connection ob_oracle_options] {
+                if {$group ni {connection tpcc tpch}} {error "Unknown OceanBase Oracle options group: $group"}
+                dict set defaults $group [dict merge [dict get $defaults $group] $values]
+            }
+        }
+        return $defaults
+    }
+
     proc merge_registry {saved defaults} {
         # Keep saved categories intact; add only categories introduced by XML.
         set defaults [regsub -all {(TP)(RO)(C-[CH])} $defaults {\1\3}]
@@ -87,7 +118,7 @@ namespace eval oceanbaseconfig {
     }
 
     proc normalize {configuration} {
-        set defaults {connection {ob_compatibility_mode mysql ob_cluster {}}}
+        set defaults {connection {ob_compatibility_mode mysql ob_cluster {} ob_oracle_options {}}}
         set mode mysql
         if {[dict exists $configuration connection ob_compatibility_mode]} {
             set mode [string tolower [dict get $configuration connection ob_compatibility_mode]]

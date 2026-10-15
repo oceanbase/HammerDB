@@ -44,6 +44,84 @@ wm withdraw .ed_mainFrame
 set configoceanbase [oceanbaseconfig::normalize [::XML::To_Dict [file join $root config oceanbase.xml]]]
 set baseline $configoceanbase
 set mysql_before $configmysql
+set oracle_before $configoracle
+
+proc select_ob_mode {mode} {
+    set widget $::oceanbase::mysql::option_widgets(ob_compatibility_mode)
+    $widget set $mode
+    event generate $widget <<ComboboxSelected>>
+    update
+}
+
+test options-mode-switch {Selecting Oracle replaces MySQL fields in the same dialog} -body {
+    oceanbase::mysql::show_options tpcc all
+    select_ob_mode oracle
+    list [winfo exists .oboptions] [info exists ::oceanbase::mysql::option_widgets(system_user)] \
+        [info exists ::oceanbase::mysql::option_widgets(tpcc_user)] \
+        [info exists ::oceanbase::mysql::option_widgets(ob_storage_engine)] \
+        [.oboptions.tabs tab 0 -text] [.oboptions.tabs tab 1 -text]
+} -cleanup {destroy .oboptions} -result {1 1 1 0 Connection Settings}
+
+test options-mode-drafts {Switching modes retains both unsaved forms} -body {
+    oceanbase::mysql::show_options tpcc all
+    set ::oceanbase::mysql::options(tpcc,ob_user) mysql_draft
+    select_ob_mode oracle
+    set ::oceanbase::mysql::options(oracle_tpcc,tpcc_user) oracle_draft
+    select_ob_mode mysql
+    set mysql $::oceanbase::mysql::options(tpcc,ob_user)
+    select_ob_mode oracle
+    list $mysql $::oceanbase::mysql::options(oracle_tpcc,tpcc_user) \
+        [expr {$configoracle eq $oracle_before}] [expr {$configmysql eq $mysql_before}]
+} -cleanup {destroy .oboptions} -result {mysql_draft oracle_draft 1 1}
+
+test options-oracle-dependencies {Oracle test driver disables the timed controls} -body {
+    oceanbase::mysql::show_options tpcc drive
+    select_ob_mode oracle
+    $::oceanbase::mysql::option_widgets(async_scale) invoke
+    set widget $::oceanbase::mysql::option_widgets(ora_driver)
+    $widget.test invoke
+    list $::oceanbase::mysql::options(oracle_tpcc,async_scale) \
+        [$::oceanbase::mysql::option_widgets(duration) instate disabled] \
+        [$::oceanbase::mysql::option_widgets(async_client) instate disabled]
+} -cleanup {destroy .oboptions} -result {false 1 1}
+
+test options-oracle-tpch {Oracle TPROC-H has a parallelism control and refresh dependencies} -body {
+    oceanbase::mysql::show_options tpch all
+    select_ob_mode oracle
+    set before [$::oceanbase::mysql::option_widgets(update_sets) instate disabled]
+    $::oceanbase::mysql::option_widgets(refresh_on) invoke
+    list [winfo class $::oceanbase::mysql::option_widgets(degree_of_parallel)] \
+        $before [$::oceanbase::mysql::option_widgets(update_sets) instate disabled]
+} -cleanup {destroy .oboptions} -result {TEntry 1 0}
+
+test options-oracle-save {Oracle settings persist separately and reopen through the selected backend} -body {
+    oceanbase::mysql::show_options tpcc all
+    select_ob_mode oracle
+    set ::oceanbase::mysql::options(oracle_tpcc,tpcc_user) oracle_saved
+    .oboptions.buttons.ok invoke
+    configobtpcc all
+    sqlite3 settings [CheckSQLiteDB oceanbase]
+    set stored [settings onecolumn {SELECT val FROM connection WHERE key='ob_oracle_options'}]
+    settings close
+    list $::oceanbase::mysql::options(connection,ob_compatibility_mode) \
+        $::oceanbase::mysql::options(oracle_tpcc,tpcc_user) [dict get $stored tpcc tpcc_user] \
+        [dict get $configoceanbase tpcc ob_user] [expr {$configoracle eq $oracle_before}]
+} -cleanup {destroy .oboptions; set configoceanbase $baseline} -result {oracle oracle_saved oracle_saved root 1}
+
+test options-oracle-endpoint {Each mode retains its own endpoint and tenant after saving} -body {
+    oceanbase::mysql::show_options tpcc all
+    set ::oceanbase::mysql::options(connection,ob_host) mysql.example
+    set ::oceanbase::mysql::options(connection,ob_tenant) mysql_tenant
+    select_ob_mode oracle
+    set ::oceanbase::mysql::options(oracle_connection,ob_host) oracle.example
+    set ::oceanbase::mysql::options(oracle_connection,ob_tenant) oracle_tenant
+    .oboptions.buttons.ok invoke
+    configobtpcc all
+    set active [oceanbase::active_config $configoceanbase]
+    list $::oceanbase::mysql::options(oracle_connection,ob_host) \
+        [dict get $active connection ob_tenant] [dict get $configoceanbase connection ob_host] \
+        [dict get $configoceanbase connection ob_tenant]
+} -cleanup {destroy .oboptions; set configoceanbase $baseline} -result {oracle.example oracle_tenant mysql.example mysql_tenant}
 
 test options-layout {Independent OB dialog follows native Connection/Settings layout} -body {
     oceanbase::mysql::show_options tpcc all

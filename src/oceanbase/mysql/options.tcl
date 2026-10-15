@@ -44,13 +44,14 @@ namespace eval oceanbase::mysql {
         ttk::label $frame.l$row -text "$label :"
         set widget $frame.e$row
         set valuevar ::oceanbase::mysql::options($section,$key)
+        set callback [expr {[string match oracle_* $section] ? "::oceanbase::oracle::option_changed" : "::oceanbase::mysql::option_changed"}]
         switch $kind {
-            boolean {ttk::checkbutton $widget -variable $valuevar -onvalue true -offvalue false -command [list ::oceanbase::mysql::option_changed $key]}
-            flag {ttk::checkbutton $widget -variable $valuevar -onvalue 1 -offvalue 0 -command [list ::oceanbase::mysql::option_changed $key]}
+            boolean {ttk::checkbutton $widget -variable $valuevar -onvalue true -offvalue false -command [list $callback $key]}
+            flag {ttk::checkbutton $widget -variable $valuevar -onvalue 1 -offvalue 0 -command [list $callback $key]}
             driver {
                 ttk::frame $widget
                 foreach {value text} {test {Test Driver Script} timed {Timed Driver Script}} {
-                    ttk::radiobutton $widget.$value -text $text -value $value -variable $valuevar -command [list ::oceanbase::mysql::option_changed $key]
+                    ttk::radiobutton $widget.$value -text $text -value $value -variable $valuevar -command [list $callback $key]
                     pack $widget.$value -anchor w
                 }
             }
@@ -65,7 +66,10 @@ namespace eval oceanbase::mysql {
             scale {ttk::combobox $widget -textvariable $valuevar -values {1 10 30 100 300 1000 3000 10000 30000 100000} -width 28}
             warehouse {ttk::spinbox $widget -textvariable $valuevar -values [get_warehouse_list_for_spinbox] -width 28}
             spin {ttk::spinbox $widget -textvariable $valuevar -from 1 -to 512 -width 28}
-            mode {ttk::combobox $widget -textvariable $valuevar -values [::oceanbase::supported_modes] -state readonly -width 28}
+            mode {
+                ttk::combobox $widget -textvariable $valuevar -values [::oceanbase::supported_modes] -state readonly -width 28
+                bind $widget <<ComboboxSelected>> ::oceanbase::mysql::render_options
+            }
             default {
                 ttk::entry $widget -textvariable $valuevar -width 30
                 if {$kind eq "password"} {$widget configure -show *}
@@ -119,6 +123,10 @@ namespace eval oceanbase::mysql {
         variable options
         variable options_context
         lassign $options_context group option
+        if {$options(connection,ob_compatibility_mode) eq "oracle"} {
+            ::oceanbase::oracle::update_option_states $group $option
+            return
+        }
         set ssl [expr {$options(connection,ob_ssl) eq "true"}]
         foreach key {ob_ssl_two_way ob_ssl_linux_capath ob_ssl_windows_capath ob_ssl_ca ob_ssl_cipher} {option_enabled $key $ssl}
         foreach key {ob_ssl_cert ob_ssl_key} {option_enabled $key [expr {$ssl && $options(connection,ob_ssl_two_way) eq "true"}]}
@@ -154,6 +162,12 @@ namespace eval oceanbase::mysql {
                 set options($section,$key) $value
             }
         }
+        dict for {section values} [::oceanbaseconfig::oracle_options $normalized] {
+            dict for {key value} $values {
+                if {[string match *pass* $key]} {set value [decode_password $value]}
+                set options(oracle_$section,$key) $value
+            }
+        }
         if {$option eq "counter"} {
             dict for {key value} [dict get $genericdict transaction_counter] {set options(counter,$key) $value}
         }
@@ -172,6 +186,30 @@ namespace eval oceanbase::mysql {
         .oboptions.tabs add .oboptions.tabs.connection -text Connection
         .oboptions.tabs add .oboptions.tabs.settings -text Settings
         pack .oboptions.tabs -fill both -expand 1 -padx 5 -pady 5
+        ttk::frame .oboptions.buttons
+        ttk::button .oboptions.buttons.cancel -text Cancel -command {destroy .oboptions}
+        ttk::button .oboptions.buttons.ok -text OK -command ::oceanbase::mysql::save_options
+        pack .oboptions.buttons.cancel .oboptions.buttons.ok -side right -padx 5 -pady 5
+        pack .oboptions.buttons -fill x
+        render_options
+        if {$option eq "drive" || $option eq "counter"} {.oboptions.tabs select .oboptions.tabs.settings}
+        wm geometry .oboptions +50+50
+    }
+
+    proc render_options {} {
+        variable options
+        variable options_context
+        variable option_widgets
+        lassign $options_context group option
+        foreach frame {.oboptions.tabs.connection .oboptions.tabs.settings} {
+            foreach child [winfo children $frame] {destroy $child}
+        }
+        catch {destroy .oboptions.notice}
+        array unset option_widgets
+        if {$options(connection,ob_compatibility_mode) eq "oracle"} {
+            ::oceanbase::oracle::render_options $group $option
+            return
+        }
         set frame .oboptions.tabs.connection
         set fields {{ob_host {OceanBase Host} entry} {ob_port {OceanBase Port} entry}
             {ob_ssl {SSL} boolean} {ob_ssl_two_way {SSL Mode} sslmode}}
@@ -210,14 +248,7 @@ namespace eval oceanbase::mysql {
             grid $frame.poolhelp -row [incr row] -column 0 -columnspan 2 -sticky w -padx 5 -pady 5
         }
         grid columnconfigure $frame 1 -weight 1
-        ttk::frame .oboptions.buttons
-        ttk::button .oboptions.buttons.cancel -text Cancel -command {destroy .oboptions}
-        ttk::button .oboptions.buttons.ok -text OK -command ::oceanbase::mysql::save_options
-        pack .oboptions.buttons.cancel .oboptions.buttons.ok -side right -padx 5 -pady 5
-        pack .oboptions.buttons -fill x
         update_option_states
-        if {$option eq "drive" || $option eq "counter"} {.oboptions.tabs select .oboptions.tabs.settings}
-        wm geometry .oboptions +50+50
     }
 
     proc counter_options {bm} {show_options [expr {$bm eq "TPC-C" ? "tpcc" : "tpch"}] counter}

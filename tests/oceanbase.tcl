@@ -253,9 +253,9 @@ test counter-start-arguments {Counter thread startup preserves empty and special
 test mode-legacy {Existing configurations default to the MySQL backend} -body {
     oceanbase::backend {connection {ob_host localhost}}
 } -result ::oceanbase::mysql
-test mode-oracle-unsupported {Oracle must never fall back to the MySQL implementation} -body {
+test mode-oracle {Oracle must never fall back to the MySQL implementation} -body {
     oceanbase::backend {connection {ob_compatibility_mode oracle}}
-} -returnCodes error -match glob -result {*oracle*not implemented*}
+} -result ::oceanbase::oracle
 test mode-unknown {Mode values cannot select arbitrary Tcl commands} -body {
     oceanbase::backend {connection {ob_compatibility_mode {mysql; error unexpected}}}
 } -returnCodes error -match glob -result {*not implemented*}
@@ -333,12 +333,33 @@ test data-oceanbase {Both offline generators select the OceanBase default format
     if {$had_rdbms} {set ::rdbms $saved_rdbms} else {unset ::rdbms}
     unset ::selected_format
 } -result {ob ob}
-test data-oceanbase-unsupported {Offline generators reject unimplemented tenant modes before the dialog} -setup {
+test data-oceanbase-oracle {Both offline generators select the native Oracle data format} -setup {
     set saved_ob $::configoceanbase
     set had_rdbms [info exists ::rdbms]
     if {$had_rdbms} {set saved_rdbms $::rdbms}
     set ::rdbms OceanBase
     dict set ::configoceanbase connection ob_compatibility_mode oracle
+    set had_dialog [llength [info commands tk_messageBox]]
+    if {$had_dialog} {rename tk_messageBox saved_data_dialog}
+    proc tk_messageBox {args} {set ::selected_format [uplevel 1 {set db}]; return no}
+} -body {
+    gendata_tpcc
+    set c $::selected_format
+    gendata_tpch
+    list $c $::selected_format
+} -cleanup {
+    set ::configoceanbase $saved_ob
+    rename tk_messageBox {}
+    if {$had_dialog} {rename saved_data_dialog tk_messageBox}
+    if {$had_rdbms} {set ::rdbms $saved_rdbms} else {unset ::rdbms}
+    unset ::selected_format
+} -result {oracle oracle}
+test data-oceanbase-unsupported {Offline generators reject unknown tenant modes before the dialog} -setup {
+    set saved_ob $::configoceanbase
+    set had_rdbms [info exists ::rdbms]
+    if {$had_rdbms} {set saved_rdbms $::rdbms}
+    set ::rdbms OceanBase
+    dict set ::configoceanbase connection ob_compatibility_mode unknown
 } -body {
     set result {}
     foreach command {gendata_tpcc gendata_tpch} {
@@ -555,9 +576,10 @@ test options-save-atomic {Bound values preserve apostrophes and a later SQL fail
 
 test options-save-failure {GUI publishes new configuration and closes only after successful persistence} -setup {
     set worker [interp create]
+    $worker eval [list source [file join $root modules oceanbaseconfig-1.0.tm]]
     $worker eval [list source [file join $root src oceanbase mysql adapter.tcl]]
     $worker eval {
-        set configoceanbase {tpcc {ob_pass old}}
+        set configoceanbase {connection {ob_compatibility_mode mysql} tpcc {ob_pass old}}
         set ::oceanbase::mysql::options(tpcc,ob_pass) new
         namespace eval oceanbaseconfig {proc save {args} {error "disk failure"}}
         namespace eval oceanbase {proc validate {args} {}}

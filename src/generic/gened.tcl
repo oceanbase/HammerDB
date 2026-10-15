@@ -3339,6 +3339,10 @@ proc find_current_dict {} {
                     set tmpdictforpt [ dict remove [ subst \$config$key ] $bmdct ]
                 }
             }
+            if {$key eq "oceanbase"} {
+                set tmpdictforpt [dict remove [oceanbase::active_config $tmpdictforpt] $bmdct]
+                dict unset tmpdictforpt connection ob_oracle_options
+            }
             return $tmpdictforpt
         }
     }
@@ -3570,9 +3574,11 @@ proc loadtpcc {} {
         if { [ dict get $dbdict $key name ] eq $rdbms } {
             set dictname config$key
             upvar #0 $dictname $dictname
+            set workload_config [set $dictname]
+            if {$key eq "oceanbase"} {set workload_config [oceanbase::active_config $workload_config]}
             set prefix [ dict get $dbdict $key prefix ]
             set drivername [ concat [subst {$prefix}]_driver ]
-            set drivertype [ dict get [ set $dictname ] tpcc $drivername ]
+            set drivertype [ dict get $workload_config tpcc $drivername ]
 	    if { $drivertype eq "test" } { set lprefix "load" } else { set lprefix "loadtimed" }
             if {[dict exists $genericdict commandline jobs_disable]} {
             if { [dict get $genericdict commandline jobs_disable] eq 0 } {
@@ -3606,12 +3612,12 @@ proc loadtpcc {} {
             }
             set command [ concat [subst {$lprefix$prefix}]tpcc ]
             eval $command
-            set allw [ lsearch -inline [ dict get [ set $dictname ] tpcc ] *allwarehouse ]
+            set allw [ lsearch -inline [ dict get $workload_config tpcc ] *allwarehouse ]
             if { $allw != "" } {
-                set db_allwarehouse [ dict get [ set $dictname ] tpcc $allw ]
-                set asyscl [ lsearch -inline [ dict get [ set $dictname ] tpcc ] *async_scale ]
+                set db_allwarehouse [ dict get $workload_config tpcc $allw ]
+                set asyscl [ lsearch -inline [ dict get $workload_config tpcc ] *async_scale ]
                 if { $asyscl != "" } {
-                    set db_async_scale [ dict get [ set $dictname ] tpcc $asyscl ]
+                    set db_async_scale [ dict get $workload_config tpcc $asyscl ]
                 } else {
                     set db_async_scale "false"
                 }
@@ -3623,9 +3629,9 @@ proc loadtpcc {} {
             }
 	    #force timeprofiler to xtprof keep option to choose alternative as placeholder after deprecating etprof
             if { $profiler eq "xtprof" } { set profile_func "xttimeprofile" }  else { set profile_func "xttimeprofile" }
-            set timep [ lsearch -inline [ dict get [ set $dictname ] tpcc ] *timeprofile ]
+            set timep [ lsearch -inline [ dict get $workload_config tpcc ] *timeprofile ]
             if { $timep != "" } {
-                set db_timeprofile [ dict get [ set $dictname ] tpcc $timep ]
+                set db_timeprofile [ dict get $workload_config tpcc $timep ]
                 if { $db_timeprofile } { shared_tpcc_functions $profile_func "false" }
             }
             break
@@ -3645,11 +3651,13 @@ proc loadtpch {} {
         if { [ dict get $dbdict $key name ] eq $rdbms } {
             set dictname config$key
             upvar #0 $dictname $dictname
+            set workload_config [set $dictname]
+            if {$key eq "oceanbase"} {set workload_config [oceanbase::active_config $workload_config]}
             set prefix [ dict get $dbdict $key prefix ]
             set command [ concat [subst {load$prefix}]tpch ]
-            set cloudq [ lsearch -inline [ dict get [ set $dictname ] tpch ] *cloud_query ]
+            set cloudq [ lsearch -inline [ dict get $workload_config tpch ] *cloud_query ]
             if { $cloudq != "" } {
-                set db_cloud_query [ dict get [ set $dictname ] tpch $cloudq ]
+                set db_cloud_query [ dict get $workload_config tpch $cloudq ]
                 if { $db_cloud_query } { set command [ concat [subst {load$prefix}]cloud ] }
             }
             eval $command

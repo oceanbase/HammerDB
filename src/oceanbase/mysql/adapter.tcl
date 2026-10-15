@@ -201,18 +201,25 @@ namespace eval oceanbase::mysql {
         variable options
         variable options_context
         set updated $configoceanbase
+        set oracle_options [::oceanbaseconfig::oracle_options $updated]
         foreach entry [array names options] {
             lassign [split $entry ,] group key
             if {$group eq "counter"} {continue}
             set value $options($entry)
+            if {[string match oracle_* $group]} {
+                if {[string match *pass* $key]} {set value [quotemeta $value]}
+                dict set oracle_options [string range $group 7 end] $key $value
+                continue
+            }
             if {$key in {ob_pass ob_tpch_pass}} {set value [quotemeta $value]}
             dict set updated $group $key $value
         }
+        dict set updated connection ob_oracle_options $oracle_options
         if {[catch {::oceanbase::validate $updated} message]} {
             tk_messageBox -parent .oboptions -icon error -message $message
             return
         }
-        if {[catch {::oceanbasecommon::ssl_options $updated} message]} {
+        if {[dict get $updated connection ob_compatibility_mode] eq "mysql" && [catch {::oceanbasecommon::ssl_options $updated} message]} {
             tk_messageBox -parent .oboptions -icon error -message $message
             return
         }

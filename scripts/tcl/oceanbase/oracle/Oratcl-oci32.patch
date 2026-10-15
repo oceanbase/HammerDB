@@ -1,0 +1,43 @@
+diff --git a/generic/orabind.c b/generic/orabind.c
+index 3bfdd15..3741a37 100644
+--- a/generic/orabind.c
++++ b/generic/orabind.c
+@@ -32,0 +33 @@ Oratcl_ArrayPutElement (ictxp, bindp, iter, index, bufpp, alenp, piecep, indpp)
++	Tcl_Size length;
+@@ -34,2 +35,2 @@ Oratcl_ArrayPutElement (ictxp, bindp, iter, index, bufpp, alenp, piecep, indpp)
+-	if (Tcl_ListObjIndex(NULL, tmp_col->array_values, iter, &element) != TCL_OK) {
+-	  /* handle invalid list element error */
++	if (Tcl_ListObjIndex(NULL, tmp_col->array_values, iter, &element) != TCL_OK || element == NULL) {
++		return OCI_ERROR;
+@@ -37 +38,5 @@ Oratcl_ArrayPutElement (ictxp, bindp, iter, index, bufpp, alenp, piecep, indpp)
+-	*bufpp = Tcl_GetStringFromObj(element, (Tcl_Size *) alenp);
++	*bufpp = Tcl_GetStringFromObj(element, &length);
++	if (length < 0 || (Tcl_WideUInt) length > UINT_MAX) {
++		return OCI_ERROR;
++	}
++	*alenp = (ub4) length;
+diff --git a/generic/oraparse.c b/generic/oraparse.c
+index b65fd6b..9c002e2 100644
+--- a/generic/oraparse.c
++++ b/generic/oraparse.c
+@@ -48 +48 @@ Oratcl_Parse (clientData, interp, objc, objv)
+-	ub4		stln;
++	Tcl_Size	stln;
+@@ -75 +75 @@ Oratcl_Parse (clientData, interp, objc, objv)
+-	stmt = Tcl_GetStringFromObj(objv[2], (Tcl_Size *) &stln);
++	stmt = Tcl_GetStringFromObj(objv[2], &stln);
+diff --git a/generic/oratcl.c b/generic/oratcl.c
+index cfc374a..7941294 100644
+--- a/generic/oratcl.c
++++ b/generic/oratcl.c
+@@ -737,0 +738,3 @@ Oratcl_Init (interp)
++	if (Tcl_PkgProvide(interp, "OratclOCI32", "1.0") != TCL_OK) {
++		return TCL_ERROR;
++	}
+diff --git a/generic/oratypes.h b/generic/oratypes.h
+index e56a0a1..fa11c89 100644
+--- a/generic/oratypes.h
++++ b/generic/oratypes.h
+@@ -105 +105 @@
+-#define ub4 Tcl_Size
++#define ub4 unsigned int

@@ -1,11 +1,15 @@
 # OceanBase
 
 Select **OceanBase** in Benchmark Options, or use `dbset db ob` in
-the CLI. This category reuses HammerDB's MySQL TPROC-C and TPROC-H workloads.
+the CLI. **Tenant Mode** selects MySQL or Oracle-compatible tenants. Switching
+to Oracle replaces the fields with the native Oracle-style Connection / Settings
+form. Each mode retains its own endpoint, credentials and workload settings.
 The existing OceanBase option under MySQL remains available for compatibility.
-Oracle-compatible tenants are not supported by this category yet.
 
-## Connection
+Oracle mode is new in this branch and requires the Linux OBCI setup below. Earlier
+OceanBase preview packages support MySQL mode only.
+
+## MySQL connection
 
 Use the business tenant's credentials. Set `ob_user` (TPROC-C) or `ob_tpch_user`
 (TPROC-H) to the unqualified user, and set the connection fields separately:
@@ -53,7 +57,7 @@ diset connection ob_cluster {}
 The default is 120 seconds, including schema statistics collection. It does not
 change the tenant's global timeout or SQL mode.
 
-## Workloads and results
+## MySQL workloads and results
 
 The independent OceanBase dialogs use MySQL's **Connection / Settings** layout,
 control types and option dependencies. OceanBase credentials and workload
@@ -281,55 +285,125 @@ Windows execution and native MySQL server regression remain unverified. These
 tests establish functional compatibility on the stated environment, not a
 performance improvement or a certified benchmark result.
 
+## Oracle-compatible tenants
+
+OBCI implements the OCI client API over the OceanBase protocol. This backend
+uses the native Oracle generators through Oratcl, with OceanBase-specific login,
+schema and monitoring adaptations. It does not use an Oracle wire-protocol client.
+
+Install OBCI and libobclient on the Linux x86-64 HammerDB host. Both packages must
+be installed, and the directory containing `libobci.so` and `libobclnt.so.2` must
+be on `LD_LIBRARY_PATH` before HammerDB starts. The initial integration uses
+OBCI 2.1.1.4, libobclient 2.2.14 and OceanBase 4.4.2.1.
+
+The Tcl 9 Oratcl driver requires an OCI-width correction for array binding.
+The uncorrected callback writes a Tcl-sized length into an OCI 32-bit field;
+the Oracle backend rejects that driver before connecting. Build a private driver
+from the HammerDB Oratcl fork, pinned to the source revision used by the patch:
+
+```sh
+git clone https://github.com/sm-shaw/Oratcl.git /tmp/hdb-oratcl-source
+git -C /tmp/hdb-oratcl-source checkout e4ec059e5727b9178934a4fe32801e6a104bb0ba
+scripts/tcl/oceanbase/oracle/build-oratcl.sh /tmp/hdb-oratcl-source \
+  /path/to/matching-tcl/unix /path/to/matching-tcl/generic /path/to/private-oratcl
+export OBCI_ORATCL_LIBRARY=/path/to/private-oratcl/libOratcl4.6.1.so
+export LD_LIBRARY_PATH=/u01/obclient/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+./hammerdbcli auto scripts/tcl/oceanbase/oracle/check-driver.tcl
+```
+
+Use the same Tcl major version and architecture as the HammerDB runtime. The
+build script writes only to the private output directory. A release may instead
+bundle the corrected driver. `OBCI_LIBRARY` sets the default OBCI path and the
+driver-check path. A saved `obci_library` connection option takes precedence for
+workloads.
+
+Select **Oracle** in the OceanBase dialog, or configure the active Oracle profile
+in the CLI. Set the build-user count after increasing the warehouse count:
+
+```tcl
+dbset db ob
+dbset bm TPROC-C
+diset connection ob_compatibility_mode oracle
+diset connection ob_host observer.example
+diset connection ob_port 2881
+diset connection ob_tenant oracle_tenant
+diset connection ob_cluster {}
+diset connection obci_library /u01/obclient/lib/libobci.so
+diset connection system_user sys
+diset connection system_password $::env(OB_SYS_PASSWORD)
+diset tpcc tpcc_user hdb_tpcc
+diset tpcc tpcc_pass $::env(OB_PASSWORD)
+diset tpcc count_ware 1
+diset tpcc num_vu 1
+```
+
+The system user belongs to the **Oracle business tenant**, not `root@sys`.
+It creates a separate benchmark user; a build rejects an existing user with
+tables. Use unqualified, unquoted schema names. OBCI TNS descriptors carry the
+separate tenant/cluster suffix through `OB_USER_EXTRA_INFO`; passwords are never
+written into those descriptors. Leave the optional OBCI Service Name empty to
+use the username as the service. This field is an OBCI connection service, not
+OBProxy Service Name routing.
+
+After selecting Oracle, `diset` accepts native Oracle option names, such as
+`tpcc_user`, `count_ware`, `ora_driver`, and TPROC-H `tpch_user`, `scale_fact`,
+`degree_of_parallel`. Common `ob_*` aliases are mapped to the active profile.
+The original MySQL options and native Oracle category remain separate. The
+Oracle profile is persisted inside OceanBase's `connection.ob_oracle_options`.
+
+Schema builders retain native logical tables, keys and procedures, removing
+Oracle-specific physical storage clauses. H primary keys are created directly,
+without Oracle's precreated unique-index attachment or deferred-constraint
+clauses; all eight primary keys and eight foreign keys are retained. RF1 buffers
+at most seven line items per order, then inserts the order before its lines so
+the immediate foreign key is satisfied. RF2 deletes the lines before the order.
+HISTORY inserts use distinct binding
+names for each column: this OBCI version silently skips the native repeated-name
+array insert. Schema inserts that report zero affected rows now fail immediately.
+Payment and order-status calls convert their two DATE outputs to ISO text inside
+the anonymous PL/SQL call block. This avoids an OBCI 2.1.1.4 DATE output buffer
+overwrite; stored procedure signatures, DATE columns and transaction logic stay
+unchanged. Loading batches stay below Observer's
+1,024-piece-per-parameter limit, including one-to-many order lines and part
+suppliers. H load and refresh dates use numeric months to match their SQL mask.
+Timed TPROC-C and its counter use OceanBase tenant statistics rather
+than AWR snapshots. NOPM is derived from the measured change in `D_NEXT_O_ID`;
+TPM includes tenant commits and rollbacks. Use a dedicated tenant for measurement.
+The H counter reports tenant SELECT activity, subtracting its own polls; it is
+not a count of completed benchmark query sets.
+
+Oracle mode does not expose MySQL engine/TLS fields, Oracle tablespaces, TimesTen,
+hash clusters, native Oracle partitioning, checkpoints or Cluster Connect Pool.
+The stock Oratcl connection parser cannot represent `@` in passwords; this backend
+rejects those passwords explicitly. A loaded OCI client and OBCI TNS settings
+are fixed for that interpreter: restart HammerDB before changing endpoints or
+switching between a genuine Oracle client and OBCI. Oracle-mode Windows execution,
+TLS, OBProxy routing and OB Cloud connectivity have not been validated.
+
+Linux validation on the versions above passed 151 configuration, generation and
+Tk assertions, C/H schema checks, a one-warehouse C test/timed workload, and a
+fresh H SF1 build with all 65 VUs successful. All 22 H queries and one RF1/RF2
+refresh cycle completed. A mixed C transaction run under Valgrind reported zero
+memory-access errors after the DATE-output adaptation. The C Customer loading
+phase was rerun after its HISTORY binding correction; the full fresh C build
+was not repeated after that correction. These are functional integration checks,
+not controlled performance measurements. Async scaling and cloud analytic
+queries were covered by generation tests but were not exercised live.
+
 ## Tenant-mode extension boundary
 
-`ob_compatibility_mode` selects a registered backend. Missing mode fields in old
-OceanBase configurations are migrated to `mysql`. Only `mysql` is currently
-registered; `oracle` and unknown values fail before workload generation or
-connection, rather than falling back to MySQL.
+`ob_compatibility_mode` selects the registered `mysql` or `oracle` backend. Missing
+mode fields in old configurations default to `mysql`; unknown values fail before
+workload generation, connection or offline file creation.
 
-The category entry points in `src/oceanbase/oboltp.tcl`, `obolap.tcl`, and
-`obotc.tcl` dispatch semantic operations. They do not name MySQL generators.
-`src/oceanbase/mysql/adapter.tcl` owns MySQL configuration mapping, username
-construction, TLS options, schema/workload generation, session initialization,
-and counter integration. `mysqlcommon` is used only by this MySQL path.
-
-To implement Oracle tenants, add and explicitly register a separate backend
-(e.g. `src/oceanbase/oracle/adapter.tcl`, namespace `oceanbase::oracle`) with:
-
-- `generate workload action`: C build/test/timed/check/delete; H build/test/check/delete.
-- `counter benchmark interval masterthread`: the Oracle connection/library and OB statistics implementation.
-- `options group option` and `validate configuration`: Oracle-specific configuration, validation and UI.
-- `data_format workload`: the format used by offline C/H data-file generation (`mysql` for the MySQL backend).
-
-The Oracle backend can reuse the existing Oracle generators with isolated
-configuration, as the MySQL backend does for MySQL. It must own Oracle login
-rules, tablespaces/schema fields, SQL and driver initialization; it must not
-route through the MySQL configuration mapper or expose MySQL engine/TLS fields.
-Preserve each mode's settings when introducing Oracle-specific config groups;
-the existing MySQL `ob_*` fields remain the compatibility contract. Register the
-Oracle backend only after its implementation and tests are available. The
-registry is an internal extension boundary, not a user-loadable plugin system.
-
-After introducing the mode dispatcher, Linux regression also passed 4,000
-non-procedure C calls, all 22 H queries, C/H counter polling, migration of a
-configuration missing the mode field, and rejection of `oracle` through the
-actual CLI. A test-only second backend verified that generation, counters,
-options and validation dispatch independently of the MySQL implementation.
+The category entry points dispatch semantic operations. Each backend owns
+configuration projection, validation, dialogs, script generation and counters.
+Oracle reuses native Oracle generators under temporary isolated configuration,
+then adapts the generated script; it never calls the MySQL workload mapper.
+Native Oracle source files are unchanged. Generic CLI/editor paths read the
+active profile for workload selection and job metadata. Offline data generation
+selects the native MySQL or Oracle data format for the selected tenant mode.
 
 Empty optional values are supplied by `oceanbaseconfig::normalize` after loading
-OceanBase XML or saved SQLite configuration. Existing values, including explicit
-empty strings, are preserved. The shared XML parser is unchanged. MySQL password
-defaults are only applied to the MySQL tenant mode.
-
-Offline data generation resolves native database formats in one shared helper.
-Additional categories supply a `<prefix>_data_generation_format` callback;
-OceanBase delegates this to its selected backend's `data_format` operation.
-Unsupported tenant modes fail before creating data-generation virtual users or
-files. Adding an Oracle backend does not require changing the C/H data generators.
-
-Offline generation was also validated on AWS Linux: one C warehouse produced all
-nine files, and H SF1 produced all eight files with the expected fixed table
-cardinalities and approximately six million line items. Customer timestamps in
-the C files use the MySQL date-time format. Fresh and persisted OceanBase
-configuration defaults and rejection of Oracle data generation passed as well.
+XML or saved SQLite configuration. Existing values are preserved, and the shared
+XML parser is unchanged.
