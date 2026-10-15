@@ -58,12 +58,13 @@ test oracle-configure-retry {Fixing a failed driver load cannot retain an earlie
     }
 } -body {
     catch {oceanbaseoraclecommon::configure {missing old.example 2881 old_tenant {} {} {sys tpcc}}}
-    oceanbaseoraclecommon::configure {available new.example 2881 new_tenant {} {} {sys tpcc}}
+    oceanbaseoraclecommon::configure {available new.example 2881 new_tenant {} {} {sys tpcc}} 120 true
     set f [open $::env(OBCI_TNS_FILE)]
     set descriptor [read $f]
     close $f
     list [string match {*HOST=new.example*OB_USER_EXTRA_INFO=@new_tenant*} $descriptor] \
-        [string match {*old_tenant*} $descriptor]
+        [string match {*old_tenant*} $descriptor] \
+        [string equal [lindex [split [string trim $descriptor] \n] end] {OBCISYSTEMVARIABLES=(OB_ENABLE_SSL=1)}]
 } -cleanup {
     file delete $::oceanbaseoraclecommon::tns_file
     set ::oceanbaseoraclecommon::tns_file {}
@@ -71,7 +72,26 @@ test oracle-configure-retry {Fixing a failed driver load cannot retain an earlie
     rename ::oceanbaseoraclecommon::load_driver {}
     rename ::oceanbaseoraclecommon::test_load_driver ::oceanbaseoraclecommon::load_driver
     if {$had_tns} {set ::env(OBCI_TNS_FILE) $saved_tns} else {unset -nocomplain ::env(OBCI_TNS_FILE)}
-} -result {1 0}
+} -result {1 0 1}
+test oracle-ssl-default {Oracle SSL is independent of the MySQL switch} -body {
+    set configured $baseline
+    dict set configured connection ob_ssl true
+    set connection [dict get [oceanbaseconfig::oracle_options $configured] connection]
+    dict get $connection ob_ssl
+} -result false
+test oracle-ssl-official-switch {Encryption-only SSL uses the official switch} -body {
+    set c [dict get [oceanbaseconfig::oracle_options $baseline] connection]
+    dict set c ob_ssl true
+    dict set c ob_ssl_ca {}
+    dict set c ob_ssl_linux_capath {}
+    dict set c ob_ssl_windows_capath {}
+    oceanbaseoraclecommon::ssl_setting $c
+} -result true
+test oracle-ssl-certificates-not-ignored {Retained certificate fields cannot silently pretend to verify the server} -body {
+    set c [dict get [oceanbaseconfig::oracle_options $baseline] connection]
+    dict set c ob_ssl true
+    oceanbaseoraclecommon::ssl_setting $c
+} -returnCodes error -match glob -result {Official OBCI certificate*has not been verified.*}
 test oracle-insert-empty {A silently skipped insert fails the schema build} -setup {
     proc ::oraexec {cursor} {return 0}
     proc ::oramsg {args} {return 0}
@@ -89,18 +109,20 @@ test oracle-cli-options {CLI changes the active Oracle profile and preserves MyS
     dict set ::configoceanbase connection ob_compatibility_mode oracle
 } -body {
     diset connection ob_host oracle.example
+    diset connection ob_ssl true
     diset tpcc ob_user ora_cli
     diset tpcc count_ware 3
     set active [oceanbase::active_config $::configoceanbase]
     list [dict get $active connection ob_host] [dict get $active tpcc ob_user] \
         [dict get $active tpcc ob_count_ware] [dict get $::configoceanbase tpcc ob_user] \
-        [expr {$saved_ora eq $::configoracle}]
+        [expr {$saved_ora eq $::configoracle}] [dict get $active connection ob_ssl] \
+        [dict get $::configoceanbase connection ob_ssl]
 } -cleanup {
     rename ::oceanbaseconfig::save {}
     rename ::oceanbaseconfig::oracle_test_save ::oceanbaseconfig::save
     set ::configoceanbase $saved_ob
     set ::rdbms $saved_rdbms
-} -result {oracle.example ora_cli 3 root 1}
+} -result {oracle.example ora_cli 3 root 1 true false}
 test oracle-distributed-cli-aliases {OB distribution options target the selected Oracle profile for both workloads} -setup {
     set saved_ob $::configoceanbase
     set saved_rdbms $::rdbms

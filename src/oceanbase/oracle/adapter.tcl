@@ -29,6 +29,7 @@ namespace eval oceanbase::oracle {
                 [dict get $native connection ob_query_timeout] [dict get $native tpcc tpcc_user] \
                 [::oceanbase::mysql::decode_password [dict get $native tpcc tpcc_pass]]]
         }
+        lappend command [::oceanbaseoraclecommon::ssl_setting [dict get $native connection]]
         return "package require oceanbaseoraclecommon\n$command\n"
     }
 
@@ -67,7 +68,7 @@ namespace eval oceanbase::oracle {
         if {[dict get $native tpch scale_fact] ni {1 10 30 100 300 1000 3000 10000 30000 100000}} {error "Unsupported TPROC-H scale factor"}
         foreach group {connection tpcc tpch} {
             dict for {key value} [dict get $native $group] {
-                if {$key in {distributed_schema raiseerror keyandthink checkpoint partition hash_clusters tpcc_tt_compat allwarehouse ora_timeprofile async_scale async_verbose connect_pool tpch_tt_compat raise_query_error verbose refresh_on refresh_verbose cloud_query} && $value ni {true false}} {error "$key must be true or false"}
+                if {$key in {ob_ssl distributed_schema raiseerror keyandthink checkpoint partition hash_clusters tpcc_tt_compat allwarehouse ora_timeprofile async_scale async_verbose connect_pool tpch_tt_compat raise_query_error verbose refresh_on refresh_verbose cloud_query} && $value ni {true false}} {error "$key must be true or false"}
                 if {[string match *pass* $key] && [string first @ [::oceanbase::mysql::decode_password $value]] >= 0} {error "This Oratcl build cannot encode @ in a password; use an account with a different password"}
             }
         }

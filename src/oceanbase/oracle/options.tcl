@@ -30,7 +30,18 @@ namespace eval oceanbase::oracle {
         set frame .oboptions.tabs.connection
         set row 0
         foreach field {{ob_host {OceanBase Host} entry}
-                {ob_port {OceanBase Port} entry} {ob_tenant {Tenant Name} entry} {ob_cluster {Cluster Name} entry}
+                {ob_port {OceanBase Port} entry}} {
+            lassign $field key label kind
+            ::oceanbase::mysql::option_row $frame [incr row] oracle_connection $key $label $kind
+        }
+        set capath [expr {$::tcl_platform(platform) eq "windows" ? "ob_ssl_windows_capath" : "ob_ssl_linux_capath"}]
+        set ssl_fields [list {ob_ssl {SSL} boolean} {ob_ssl_two_way {SSL Mode} sslmode} [list $capath {SSL CApath} entry]]
+        foreach field [concat $ssl_fields {{ob_ssl_ca {SSL CA} entry} {ob_ssl_cert {SSL Cert} entry}
+                {ob_ssl_key {SSL Key} entry} {ob_ssl_cipher {SSL Cipher} entry}}] {
+            lassign $field key label kind
+            ::oceanbase::mysql::option_row $frame [incr row] oracle_connection $key $label $kind
+        }
+        foreach field {{ob_tenant {Tenant Name} entry} {ob_cluster {Cluster Name} entry}
                 {ob_query_timeout {Query Timeout (secs)} entry}} {
             lassign $field key label kind
             ::oceanbase::mysql::option_row $frame [incr row] oracle_connection $key $label $kind
@@ -46,6 +57,8 @@ namespace eval oceanbase::oracle {
             lassign $field key label kind
             ::oceanbase::mysql::option_row $frame [incr row] oracle_$group $key $label $kind
         }
+        # Leave room for the SSL fields on the 900px benchmark desktop.
+        foreach widget [grid slaves $frame] {grid configure $widget -pady 1}
         grid columnconfigure $frame 1 -weight 1
         set frame .oboptions.tabs.settings.fields
         ttk::frame $frame -padding 4
@@ -89,6 +102,13 @@ namespace eval oceanbase::oracle {
 
     proc update_option_states {group option} {
         upvar #0 ::oceanbase::mysql::options options
+        set ssl [expr {$options(oracle_connection,ob_ssl) eq "true"}]
+        foreach key {ob_ssl_two_way ob_ssl_linux_capath ob_ssl_windows_capath ob_ssl_ca ob_ssl_cipher} {
+            ::oceanbase::mysql::option_enabled $key $ssl
+        }
+        foreach key {ob_ssl_cert ob_ssl_key} {
+            ::oceanbase::mysql::option_enabled $key [expr {$ssl && $options(oracle_connection,ob_ssl_two_way) eq "true"}]
+        }
         ::oceanbase::mysql::option_enabled partition_count $options(oracle_$group,distributed_schema)
         if {$option eq "counter"} {
             foreach key {tc_unique_log_name tc_log_timestamps} {::oceanbase::mysql::option_enabled $key $options(counter,tc_log_to_temp)}

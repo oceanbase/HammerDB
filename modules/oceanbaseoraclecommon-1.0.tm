@@ -65,11 +65,29 @@ namespace eval oceanbaseoraclecommon {
         return $version
     }
 
-    proc configure {settings {timeout 120}} {
+    proc ssl_setting {connection} {
+        set enabled [dict get $connection ob_ssl]
+        foreach key {ob_ssl ob_ssl_two_way} {
+            if {[dict get $connection $key] ni {true false}} {error "$key must be true or false"}
+        }
+        if {$enabled eq "false"} {return false}
+        # Only the vendor's encryption switch has been verified. Retain the
+        # shared UI fields without silently claiming to apply certificates.
+        set capath [expr {$::tcl_platform(platform) eq "windows" ? "ob_ssl_windows_capath" : "ob_ssl_linux_capath"}]
+        if {[dict get $connection ob_ssl_two_way] eq "true" ||
+                [dict get $connection $capath] ne "" || [dict get $connection ob_ssl_ca] ne "" ||
+                [dict get $connection ob_ssl_cipher] ni {{} server}} {
+            error "Official OBCI certificate, mutual SSL and cipher configuration has not been verified. For encryption-only SSL, clear SSL CApath and SSL CA, select One-Way and leave SSL Cipher as server."
+        }
+        return true
+    }
+
+    proc configure {settings {timeout 120} {ssl false}} {
         variable connection_options
         variable tns_file
         variable query_timeout
         if {![string is integer -strict $timeout] || $timeout < 1 || $timeout > 86400} {error "Invalid OceanBase Oracle query timeout"}
+        if {$ssl ni {true false}} {error "ob_ssl must be true or false"}
         set query_timeout $timeout
         variable allowed_aliases
         set text [tns {*}[lrange $settings 1 6]]
@@ -84,8 +102,12 @@ namespace eval oceanbaseoraclecommon {
                 }
             }
         }
-        if {$connection_options ne "" && $connection_options ne $settings} {
-            error "OceanBase Oracle connection settings changed after driver initialization; start a new HammerDB process"
+        # OBCI 2.1.1.4 reads this global section from its TNS file. Keep it
+        # after every alias, including pool routes, for the vendor parser.
+        append text "OBCISYSTEMVARIABLES=(OB_ENABLE_SSL=[expr {$ssl eq {true} ? 1 : 0}])\n"
+        set signature [list $settings $ssl]
+        if {$connection_options ne "" && $connection_options ne $signature} {
+            error "OceanBase Oracle connection or SSL settings changed after driver initialization; start a new HammerDB process"
         }
         if {$tns_file eq ""} {
             set channel [file tempfile tns_file [file join [expr {[info exists ::env(TMPDIR)] ? $::env(TMPDIR) : [pwd]}] hdb-obci-]]
@@ -103,7 +125,7 @@ namespace eval oceanbaseoraclecommon {
             unset -nocomplain ::env(OBCI_TNS_FILE)
             return -options $options $message
         }
-        set connection_options $settings
+        set connection_options $signature
         set allowed_aliases $aliases
         return $result
     }
@@ -177,12 +199,12 @@ namespace eval oceanbaseoraclecommon {
         return [list [dict replace $pool connections $connections] $endpoints]
     }
 
-    proc configure_pool {settings timeout user password} {
+    proc configure_pool {settings timeout user password {ssl false}} {
         variable pool_configuration
         package require tpcccommon
         set pool [::tpcccommon::get_connect_xml obora]
         lassign [pool_config $pool $settings $user $password] pool endpoints
-        configure [linsert $settings end $endpoints] $timeout
+        configure [linsert $settings end $endpoints] $timeout $ssl
         set pool_configuration $pool
     }
 

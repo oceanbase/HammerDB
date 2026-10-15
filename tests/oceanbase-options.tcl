@@ -153,6 +153,7 @@ test options-oracle-save {Oracle settings persist separately and reopen through 
     oceanbase::mysql::show_options tpcc all
     select_ob_mode oracle
     set ::oceanbase::mysql::options(oracle_tpcc,tpcc_user) oracle_saved
+    set ::oceanbase::mysql::options(oracle_connection,ob_ssl) true
     .oboptions.buttons.ok invoke
     configobtpcc all
     sqlite3 settings [CheckSQLiteDB oceanbase]
@@ -160,8 +161,9 @@ test options-oracle-save {Oracle settings persist separately and reopen through 
     settings close
     list $::oceanbase::mysql::options(connection,ob_compatibility_mode) \
         $::oceanbase::mysql::options(oracle_tpcc,tpcc_user) [dict get $stored tpcc tpcc_user] \
-        [dict get $configoceanbase tpcc ob_user] [expr {$configoracle eq $oracle_before}]
-} -cleanup {destroy .oboptions; set configoceanbase $baseline} -result {oracle oracle_saved oracle_saved root 1}
+        [dict get $configoceanbase tpcc ob_user] [expr {$configoracle eq $oracle_before}] \
+        [dict get $stored connection ob_ssl] [dict get $configoceanbase connection ob_ssl]
+} -cleanup {destroy .oboptions; set configoceanbase $baseline} -result {oracle oracle_saved oracle_saved root 1 true false}
 
 test options-oracle-endpoint {Each mode retains its own endpoint and tenant after saving} -body {
     oceanbase::mysql::show_options tpcc all
@@ -289,6 +291,23 @@ test options-tls-controls {TLS CA and mutual-authentication controls follow SSL 
     list $one_way [$::oceanbase::mysql::option_widgets(ob_ssl_ca) instate disabled] \
         [$::oceanbase::mysql::option_widgets(ob_ssl_cert) instate disabled]
 } -cleanup {destroy .oboptions} -result {1 0 0}
+
+test options-oracle-tls-controls {Oracle uses the same SSL controls with independent drafts and callbacks} -body {
+    oceanbase::mysql::show_options tpcc build
+    set ::oceanbase::mysql::options(connection,ob_ssl_ca) mysql-ca.pem
+    select_ob_mode oracle
+    set before [$::oceanbase::mysql::option_widgets(ob_ssl_ca) instate disabled]
+    $::oceanbase::mysql::option_widgets(ob_ssl) invoke
+    set one_way [$::oceanbase::mysql::option_widgets(ob_ssl_cert) instate disabled]
+    $::oceanbase::mysql::option_widgets(ob_ssl_two_way).true invoke
+    set two_way [$::oceanbase::mysql::option_widgets(ob_ssl_cert) instate disabled]
+    set ::oceanbase::mysql::options(oracle_connection,ob_ssl_ca) oracle-ca.pem
+    select_ob_mode mysql
+    set mysql $::oceanbase::mysql::options(connection,ob_ssl_ca)
+    select_ob_mode oracle
+    list $before $one_way $two_way $mysql $::oceanbase::mysql::options(oracle_connection,ob_ssl_ca) \
+        [info exists ::oceanbase::mysql::option_widgets(obci_tls_library)]
+} -cleanup {destroy .oboptions} -result {1 1 0 mysql-ca.pem oracle-ca.pem 0}
 
 test options-refresh-controls {Refresh function enables update count, delay and verbose controls} -body {
     oceanbase::mysql::show_options tpch drive

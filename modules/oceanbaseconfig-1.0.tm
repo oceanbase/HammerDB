@@ -5,7 +5,10 @@ namespace eval oceanbaseconfig {
         # Keep Oracle options inside the OceanBase category, independently of
         # both its MySQL options and the native Oracle category.
         set defaults {
-            connection {instance {} system_user sys system_password {} obci_library /u01/obclient/lib/libobci.so}
+            connection {instance {} system_user sys system_password {} obci_library /u01/obclient/lib/libobci.so
+                ob_ssl false ob_ssl_two_way false ob_ssl_linux_capath /etc/mysql/certs
+                ob_ssl_windows_capath C:\mysql\certs ob_ssl_ca ca-cert.pem ob_ssl_cert client-cert.pem
+                ob_ssl_key client-key.pem ob_ssl_cipher server}
             tpcc {tpcc_user tpcc tpcc_pass {} tpcc_def_tab users tpcc_ol_tab users tpcc_def_temp temp
                 count_ware 1 num_vu 1 distributed_schema false partition_count 24 partition false hash_clusters false tpcc_tt_compat false
                 total_iterations 10000000 raiseerror true keyandthink false checkpoint false

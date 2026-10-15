@@ -354,6 +354,18 @@ After selecting Oracle, `diset` accepts native Oracle option names, such as
 The original MySQL options and native Oracle category remain separate. The
 Oracle profile is persisted inside OceanBase's `connection.ob_oracle_options`.
 
+Oracle SSL controls match the MySQL form, with independently saved settings;
+there is no separate OBCI TLS Library option or private TLS client. The verified
+OBCI 2.1.1.4 encryption switch is written after all generated TNS aliases as
+`OBCISYSTEMVARIABLES=(OB_ENABLE_SSL=1)` (or `0` when SSL is off).
+This negotiates encryption when the server supports TLS; it can fall back to
+plaintext and does not enable server-certificate verification by itself.
+For the currently verified encryption-only path, select One-Way, clear SSL
+CApath and SSL CA, and leave SSL Cipher as `server`. The official OBCI mapping
+for CA, client certificate/key and cipher selection remains unverified; requests
+for these settings fail explicitly rather than silently ignoring the fields.
+Restart HammerDB before changing an initialized OBCI connection or SSL setting.
+
 Schema builders retain native logical tables, keys and procedures, removing
 Oracle-specific physical storage clauses. H primary keys are created directly,
 without Oracle's precreated unique-index attachment or deferred-constraint
@@ -403,7 +415,7 @@ and routing policy (`round_robin`, `random`, `first_named`, `last_named`). Pool
 aliases are registered with OBCI before its first connection. Both synchronous
 and asynchronous generated drivers retain the pool routing and OB monitoring.
 
-Oracle mode does not expose MySQL engine/TLS fields, Oracle tablespaces, TimesTen,
+Oracle mode does not expose MySQL engine fields, Oracle tablespaces, TimesTen,
 hash clusters, native Oracle partitioning, checkpoints or Cloud Analytic Queries.
 Standard TPROC-H queries and refresh functions remain available.
 The stock Oratcl connection parser cannot represent `@` in passwords; this backend
