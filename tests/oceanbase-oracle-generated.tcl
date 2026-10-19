@@ -142,8 +142,10 @@ try {
         set definition [oceanbase::oracle::procedure_definition $::_ED(package) CreateIndexes]
         list [regexp -nocase {USING INDEX|CREATE UNIQUE INDEX|DEFERRABLE} $definition] \
             [expr {[string first {CONSTRAINT PARTSUPP_PK PRIMARY KEY(PS_PARTKEY,PS_SUPPKEY)} $definition] >= 0}] \
-            [expr {[string first {CONSTRAINT LINEITEM_PARTSUPP_FK FOREIGN KEY} $definition] >= 0}]
-    } -result {0 1 1}
+            [expr {[string first {CONSTRAINT LINEITEM_PARTSUPP_FK FOREIGN KEY} $definition] >= 0}] \
+            [expr {[string first {CONSTRAINT LINEITEM_PK PRIMARY KEY (L_ORDERKEY, L_LINENUMBER)} $definition] >= 0}] \
+            [regexp {LINEITEM_PK PRIMARY KEY \(L_LINENUMBER, L_ORDERKEY\)} $definition]
+    } -result {0 1 1 1 0}
     test oracle-refresh-immediate-foreign-key {Refresh inserts the order before its buffered lines without deferred constraints} -body {
         oceanbase::dispatch generate tpch test
         set definition [oceanbase::oracle::procedure_definition $::_ED(package) mk_order_ref]

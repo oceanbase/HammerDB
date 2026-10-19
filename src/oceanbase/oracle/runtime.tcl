@@ -29,6 +29,9 @@ namespace eval oceanbase::oracle {
             regsub -all -nocase {\s+PARALLEL\M} $replacement {} replacement
             set replacement [string map [list {alter session set sort_area_size=5000000} {BEGIN NULL; END;}] $replacement]
             if {$workload eq "tpch" && $name eq "CreateIndexes"} {
+                # RF2 deletes by order key. Keep those rows adjacent in the
+                # storage primary key, as in the distributed OceanBase layout.
+                regsub -all -nocase {(LINEITEM_PK\s+PRIMARY KEY\s*)\(\s*L_LINENUMBER\s*,\s*L_ORDERKEY\s*\)} $replacement {\1(L_ORDERKEY, L_LINENUMBER)} replacement
                 # OceanBase builds the primary index with ADD PRIMARY KEY;
                 # it cannot attach an existing Oracle index with USING INDEX.
                 regsub -all -nocase {\s+USING INDEX\s+[A-Z_]+} $replacement {} replacement
