@@ -37,9 +37,8 @@ namespace eval oceanbase::oracle {
             }
             set script [string map [list $original $replacement] $script]
         }
-        # OBCI sends each array value as a piece. Observer accepts at most
-        # 1024 pieces per parameter. One order contributes up to 15 lines
-        # (TPROC-C) or 7 lines (TPROC-H), and one part has four suppliers.
+        # Retain the existing generator batch sizes. The loader below renders
+        # their values as SQL tuples instead of OBCI's per-value piece protocol.
         if {$workload eq "tpcc"} {
             set original [procedure_definition $script Orders]
             regsub -all {\$o_id % 100\M} $original {$o_id % 50} replacement
@@ -62,6 +61,21 @@ namespace eval oceanbase::oracle {
         # the native all-fields formatter can mask OBCI batch errors.
         regsub -all {puts \[ oramsg \$curn[0-9]+ all \]} $script {error $message} script
         set script [string map [list {oraexec } {::oceanbaseoraclecommon::exec_insert }] $script]
+        set loaders [expr {$workload eq "tpcc" ?
+            {Customer Orders LoadItems Stock District LoadWare} :
+            {mk_region mk_nation mk_supp mk_cust mk_part mk_order}}]
+        foreach name $loaders {
+            set original [procedure_definition $script $name]
+            set replacement [string map [list \
+                {oraopen } {::oceanbaseoracleload::open } \
+                {oraparse } {::oceanbaseoracleload::parse } \
+                {orabind } {::oceanbaseoracleload::bind } \
+                {::oceanbaseoraclecommon::exec_insert } {::oceanbaseoracleload::exec } \
+                {oracommit } {::oceanbaseoracleload::commit } \
+                {oraclose } {::oceanbaseoracleload::close }] $original]
+            set script [string map [list $original $replacement] $script]
+        }
+        set script "package require oceanbaseoracleload\n$script"
         return $script
     }
 

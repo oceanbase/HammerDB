@@ -105,6 +105,23 @@ try {
         }
         set results
     } -result {1 1 1 1 1}
+    test oracle-schema-values-only {Only build loaders use multi-row SQL; drivers keep native binding} -body {
+        set result {}
+        foreach {workload loaders} {tpcc {Customer Orders LoadItems Stock District LoadWare} tpch {mk_region mk_nation mk_supp mk_cust mk_part mk_order}} {
+            oceanbase::dispatch generate $workload build
+            lappend result [expr {[string first {package require oceanbaseoracleload} $::_ED(package)] >= 0}]
+            foreach name $loaders {
+                set definition [oceanbase::oracle::procedure_definition $::_ED(package) $name]
+                lappend result [expr {![regexp {\m(orabind|oraparse|oraexec|oracommit|oraclose)\M} $definition]}] \
+                    [expr {[string first {::oceanbaseoracleload::exec } $definition] >= 0}]
+            }
+            foreach action [expr {$workload eq {tpcc} ? {test timed} : {test}}] {
+                oceanbase::dispatch generate $workload $action
+                lappend result [expr {[string first {oceanbaseoracleload} $::_ED(package)] < 0}]
+            }
+        }
+        lsort -unique $result
+    } -result 1
     test oracle-tpch-date-format {Load and refresh dates match the numeric month SQL mask} -body {
         set result {}
         foreach action {build test} {
