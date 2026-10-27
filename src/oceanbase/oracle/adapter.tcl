@@ -15,10 +15,9 @@ namespace eval oceanbase::oracle {
         set c [dict get $native connection]
         set timeout [dict get $c ob_query_timeout]
         if {![string is integer -strict $timeout] || $timeout < 1 || $timeout > 86400} {error "OceanBase query timeout must be 1 to 86400 seconds"}
-        set o $c
-        return [list [dict get $o obci_library] [dict get $c ob_host] [dict get $c ob_port] \
-            [dict get $c ob_tenant] [dict get $c ob_cluster] [dict get $o instance] \
-            [list [dict get $o system_user] [dict get $native tpcc tpcc_user] [dict get $native tpch tpch_user]]]
+        return [dict create host [dict get $c ob_host] port [dict get $c ob_port] \
+            tenant [dict get $c ob_tenant] cluster [dict get $c ob_cluster] \
+            users [list [dict get $c system_user] [dict get $native tpcc tpcc_user] [dict get $native tpch tpch_user]]]
     }
 
     proc connection_setup {configuration {pool false}} {
@@ -30,12 +29,14 @@ namespace eval oceanbase::oracle {
                 [::oceanbase::mysql::decode_password [dict get $native tpcc tpcc_pass]]]
         }
         lappend command [::oceanbaseoraclecommon::ssl_setting [dict get $native connection]]
-        return "package require oceanbaseoraclecommon\n$command\n"
+        return "package require oceanbaseoraclecommon\n$command\nset library oboracle\n"
     }
 
     proc validate {configuration} {
         set native [config $configuration]
-        ::oceanbaseoraclecommon::tns {*}[lrange [driver_settings $configuration] 1 end]
+        set settings [driver_settings $configuration]
+        ::oceanbaseoraclecommon::validate_endpoint $settings
+        foreach user [dict get $settings users] {::oceanbaseoraclecommon::username $user $settings}
         foreach group {tpcc tpch} {
             if {[string toupper [dict get $native $group ${group}_user]] in {SYS SYSTEM PUBLIC LBACSYS ORAAUDITOR}} {
                 error "Choose a separate OceanBase Oracle benchmark user"
@@ -69,7 +70,6 @@ namespace eval oceanbase::oracle {
         foreach group {connection tpcc tpch} {
             dict for {key value} [dict get $native $group] {
                 if {$key in {ob_ssl distributed_schema raiseerror keyandthink checkpoint partition hash_clusters tpcc_tt_compat allwarehouse ora_timeprofile async_scale async_verbose connect_pool tpch_tt_compat raise_query_error verbose refresh_on refresh_verbose cloud_query} && $value ni {true false}} {error "$key must be true or false"}
-                if {[string match *pass* $key] && [string first @ [::oceanbase::mysql::decode_password $value]] >= 0} {error "This Oratcl build cannot encode @ in a password; use an account with a different password"}
             }
         }
         return $native
@@ -78,6 +78,9 @@ namespace eval oceanbase::oracle {
     proc options {group option} {::oceanbase::mysql::show_options $group $option}
     proc set_option {group key value} {
         global configoceanbase
+        if {$group eq "connection" && $key in {obci_library instance}} {
+            error "$key is a retired OCI option; OceanBase Oracle connects with libobclient host, port, tenant and cluster settings"
+        }
         set native [config $configoceanbase]
         set mapped $key
         if {[string match ob_* $key] && $group ne "connection"} {
@@ -131,7 +134,7 @@ namespace eval oceanbase::oracle {
     }
     proc counter {bm interval masterthread} {
         global configoceanbase
-        set body [info body ::tcount_ora]
+        set body [driver_commands [info body ::tcount_ora]]
         set native [config $configoceanbase]
         set setup [connection_setup $configoceanbase [expr {$bm eq "TPC-C" && [dict get $native tpcc connect_pool] eq "true"}]]
         # The parent installs module paths before invoking read_more.

@@ -9,7 +9,7 @@ discards both drafts. The layouts use OceanBase's existing controls, including a
 editable TPROC-H Scale Factor, rather than reproducing native Oracle dialogs.
 The existing OceanBase option under MySQL remains available for compatibility.
 
-Oracle mode is new in this branch and requires the Linux OBCI setup below. Earlier
+Oracle mode is new in this branch and requires the Linux libobclient binding setup below. Earlier
 OceanBase preview packages support MySQL mode only.
 
 ## MySQL connection
@@ -290,35 +290,31 @@ performance improvement or a certified benchmark result.
 
 ## Oracle-compatible tenants
 
-OBCI implements the OCI client API over the OceanBase protocol. This backend
-uses the native Oracle generators through Oratcl, with OceanBase-specific login,
-schema and monitoring adaptations. It does not use an Oracle wire-protocol client.
+This backend connects directly through the official **libobclient** C API.
+It retains the native Oracle SQL generators, stored procedures, transaction mix
+and commit boundaries, with OceanBase login, schema and monitoring adaptations.
+Oracle-mode prepared statements use parameter binding; no transaction values
+are interpolated into SQL. OBCI and Oratcl are no longer required by this backend.
+The native Oracle category continues to use its original driver.
 
-Install OBCI and libobclient on the Linux x86-64 HammerDB host. Both packages must
-be installed, and the directory containing `libobci.so` and `libobclnt.so.2` must
-be on `LD_LIBRARY_PATH` before HammerDB starts. The initial integration uses
-OBCI 2.1.1.4, libobclient 2.2.14 and OceanBase 4.4.2.1.
-
-The Tcl 9 Oratcl driver requires an OCI-width correction for array binding.
-The uncorrected callback writes a Tcl-sized length into an OCI 32-bit field;
-the Oracle backend rejects that driver before connecting. Build a private driver
-from the HammerDB Oratcl fork, pinned to the source revision used by the patch:
+Install the official libobclient SDK on the Linux x86-64 HammerDB host. Build the
+`oboracle` Tcl package against that SDK's headers and the matching Tcl 9 runtime:
 
 ```sh
-git clone https://github.com/sm-shaw/Oratcl.git /tmp/hdb-oratcl-source
-git -C /tmp/hdb-oratcl-source checkout e4ec059e5727b9178934a4fe32801e6a104bb0ba
-scripts/tcl/oceanbase/oracle/build-oratcl.sh /tmp/hdb-oratcl-source \
-  /path/to/matching-tcl/unix /path/to/matching-tcl/generic /path/to/private-oratcl
-export OBCI_ORATCL_LIBRARY=/path/to/private-oratcl/libOratcl4.6.1.so
+scripts/tcl/oceanbase/oracle/build-driver.sh \
+  /path/to/tcl9/include /path/to/tcl9/lib/libtclstub.a \
+  /u01/obclient /path/to/private-packages/oboracle1.0
+export TCLLIBPATH=/path/to/private-packages
 export LD_LIBRARY_PATH=/u01/obclient/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 ./hammerdbcli auto scripts/tcl/oceanbase/oracle/check-driver.tcl
+./hammerdb
 ```
 
-Use the same Tcl major version and architecture as the HammerDB runtime. The
-build script writes only to the private output directory. A release may instead
-bundle the corrected driver. `OBCI_LIBRARY` sets the default OBCI path and the
-driver-check path. A saved `obci_library` connection option takes precedence for
-workloads.
+Use the official **libobclient headers**, not MySQL or MariaDB headers: Oracle
+mode extends C structures such as `MYSQL_BIND`. The build script writes only to
+its output directory. Packaged applications can include `oboracle1.0` in their
+Tcl package directory; `libobclnt.so.2` must remain available to the system loader.
+The binding currently targets Linux and Tcl 9.0 or newer.
 
 Select **Oracle** in the OceanBase dialog, or configure the active Oracle profile
 in the CLI. Set the build-user count after increasing the warehouse count:
@@ -331,7 +327,6 @@ diset connection ob_host observer.example
 diset connection ob_port 2881
 diset connection ob_tenant oracle_tenant
 diset connection ob_cluster {}
-diset connection obci_library /u01/obclient/lib/libobci.so
 diset connection system_user sys
 diset connection system_password $::env(OB_SYS_PASSWORD)
 diset tpcc tpcc_user hdb_tpcc
@@ -342,11 +337,12 @@ diset tpcc num_vu 1
 
 The system user belongs to the **Oracle business tenant**, not `root@sys`.
 It creates a separate benchmark user; a build rejects an existing user with
-tables. Use unqualified, unquoted schema names. OBCI TNS descriptors carry the
-separate tenant/cluster suffix through `OB_USER_EXTRA_INFO`; passwords are never
-written into those descriptors. Leave the optional OBCI Service Name empty to
-use the username as the service. This field is an OBCI connection service, not
-OBProxy Service Name routing.
+tables. Use unqualified, unquoted schema names. The separate tenant and cluster
+fields qualify the protocol username as `user@tenant#cluster`. Leave both fields
+empty for a Cloud endpoint that accepts the username directly. Passwords are
+passed as values to libobclient; they can contain `@` and Tcl metacharacters.
+There is no OBCI Service Name or OBCI Library field. Saved legacy values for
+these two fields are ignored when loading an older configuration.
 
 After selecting Oracle, `diset` accepts native Oracle option names, such as
 `tpcc_user`, `count_ware`, `ora_driver`, and TPROC-H `tpch_user`, `scale_fact`,
@@ -354,17 +350,19 @@ After selecting Oracle, `diset` accepts native Oracle option names, such as
 The original MySQL options and native Oracle category remain separate. The
 Oracle profile is persisted inside OceanBase's `connection.ob_oracle_options`.
 
-Oracle SSL controls match the MySQL form, with independently saved settings;
-there is no separate OBCI TLS Library option or private TLS client. The verified
-OBCI 2.1.1.4 encryption switch is written after all generated TNS aliases as
-`OBCISYSTEMVARIABLES=(OB_ENABLE_SSL=1)` (or `0` when SSL is off).
-This negotiates encryption when the server supports TLS; it can fall back to
-plaintext and does not enable server-certificate verification by itself.
-For the currently verified encryption-only path, select One-Way, clear SSL
-CApath and SSL CA, and leave SSL Cipher as `server`. The official OBCI mapping
-for CA, client certificate/key and cipher selection remains unverified; requests
-for these settings fail explicitly rather than silently ignoring the fields.
-Restart HammerDB before changing an initialized OBCI connection or SSL setting.
+Oracle SSL controls match the MySQL form and retain independently saved settings.
+Both backends use the same CA/path, client certificate/key and cipher option
+validation. The Oracle binding passes these values to libobclient's official
+`mysql_ssl_set` API. Enabling SSL requires an encrypted connection; a failed TLS
+handshake does not retry in plaintext. The driver does not enable automatic
+reconnection, which could otherwise lose transaction state.
+
+For server-certificate verification, enable SSL, select One-Way, put the CA's
+directory in **SSL CApath** and its filename (for example `ca.pem`) in **SSL CA**.
+An absolute filename also works. An explicitly configured unreadable CA fails
+before connecting; an unrelated readable CA fails in libobclient during TLS.
+For Two-Way, also supply the client certificate and private key, as in MySQL mode.
+CA validation does not assert a separate hostname-verification feature.
 
 Schema builders retain native logical tables, keys and procedures, removing
 Oracle-specific physical storage clauses. H primary keys are created directly,
@@ -372,15 +370,12 @@ without Oracle's precreated unique-index attachment or deferred-constraint
 clauses; all eight primary keys and eight foreign keys are retained. RF1 buffers
 at most seven line items per order, then inserts the order before its lines so
 the immediate foreign key is satisfied. RF2 deletes the lines before the order.
-HISTORY inserts use distinct binding
-names for each column: this OBCI version silently skips the native repeated-name
-array insert. Schema inserts that report zero affected rows now fail immediately.
-Payment and order-status calls convert their two DATE outputs to ISO text inside
-the anonymous PL/SQL call block. This avoids an OBCI 2.1.1.4 DATE output buffer
-overwrite; stored procedure signatures, DATE columns and transaction logic stay
-unchanged. Loading batches stay below Observer's
-1,024-piece-per-parameter limit, including one-to-many order lines and part
-suppliers. H load and refresh dates use numeric months to match their SQL mask.
+HISTORY inserts use distinct loader binding names for each column. Schema loads
+retain the existing multi-row INSERT batches and commit boundaries; an incorrect
+affected-row count stops the build. Transaction and refresh statements use
+reusable native prepared statements. DATE outputs are fetched through the C API
+without an OCI-specific call wrapper. H load and refresh dates use numeric months
+to match their SQL mask.
 Timed TPROC-C and its counter use OceanBase tenant statistics rather
 than AWR snapshots. NOPM is derived from the measured change in `D_NEXT_O_ID`;
 TPM includes tenant commits and rollbacks. Use a dedicated tenant for measurement.
@@ -412,19 +407,37 @@ Oracle pool files. Its default two connections inherit the active Oracle profile
 Optional endpoint overrides can select another observer or ODP for the same
 tenant and benchmark schema. Each transaction type has its own connection list
 and routing policy (`round_robin`, `random`, `first_named`, `last_named`). Pool
-aliases are registered with OBCI before its first connection. Both synchronous
+aliases resolve to libobclient endpoints within each worker interpreter. Both synchronous
 and asynchronous generated drivers retain the pool routing and OB monitoring.
 
 Oracle mode does not expose MySQL engine fields, Oracle tablespaces, TimesTen,
 hash clusters, native Oracle partitioning, checkpoints or Cloud Analytic Queries.
 Standard TPROC-H queries and refresh functions remain available.
-The stock Oratcl connection parser cannot represent `@` in passwords; this backend
-rejects those passwords explicitly. A loaded OCI client and OBCI TNS settings
-are fixed for that interpreter: restart HammerDB before changing endpoints or
-switching between a genuine Oracle client and OBCI. Oracle-mode Windows execution,
-TLS, OBProxy routing and OB Cloud connectivity have not been validated.
+Connection and SSL settings apply to new connections without a process-global
+TNS file. Oracle-mode Windows execution, mutual TLS, custom cipher selection and
+cross-observer/ODP routing have not been validated with this binding.
 
-Linux validation on the versions above passed 180 configuration, generation and
+The direct binding was verified against an OB Cloud Oracle tenant using official
+libobclient 2.2.14 from a local Linux x86-64 Docker runtime. Correct-CA and
+unrelated-CA checks, Unicode/NULL/date binds, duplicate placeholders, IN/OUT/INOUT,
+long results, prepared-statement reuse after an Oracle exception, and native
+commit/rollback all passed. The opt-in live regression suite is
+`tests/oceanbase-oracle-driver.tcl`; it requires the connection variables listed
+at its start and removes only the unique objects it creates.
+
+Direct-binding validation on 2026-10-27 passed 198 offline configuration,
+generation and Tk assertions plus 11 live-driver checks. A fresh 4WH C build,
+schema check, 4VU test/timed runs, synchronous pool, and asynchronous pool with
+time profiling completed, followed by consistency checks. A fresh H SF1 build
+and schema check completed, followed by all 22 queries and one RF1/RF2 update
+set. The GUI also connected with its saved CA. These are functional checks from
+a local Docker runtime, not controlled performance comparisons. The two
+benchmark schemas were isolated from the administrator's schema.
+
+The following historical coverage used the earlier OBCI backend and does not
+establish coverage for the new binding:
+
+Earlier Linux validation passed 180 configuration, generation and
 Tk assertions. Fresh distributed schemas completed a one-warehouse C build and
 an H SF1 build (all 65 VUs successful), followed by both schema checks. Database
 metadata confirmed the HASH partitions, tablegroups, primary/foreign keys and

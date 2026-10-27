@@ -5,7 +5,7 @@ namespace eval oceanbaseconfig {
         # Keep Oracle options inside the OceanBase category, independently of
         # both its MySQL options and the native Oracle category.
         set defaults {
-            connection {instance {} system_user sys system_password {} obci_library /u01/obclient/lib/libobci.so
+            connection {instance {} system_user sys system_password {}
                 ob_ssl false ob_ssl_two_way false ob_ssl_linux_capath /etc/mysql/certs
                 ob_ssl_windows_capath C:\mysql\certs ob_ssl_ca ca-cert.pem ob_ssl_cert client-cert.pem
                 ob_ssl_key client-key.pem ob_ssl_cipher server}
@@ -19,9 +19,6 @@ namespace eval oceanbaseconfig {
                 degree_of_parallel 2 refresh_on false update_sets 1 trickle_refresh 1000
                 refresh_verbose false cloud_query false}
         }
-        if {[info exists ::env(OBCI_LIBRARY)] && $::env(OBCI_LIBRARY) ne ""} {
-            dict set defaults connection obci_library $::env(OBCI_LIBRARY)
-        }
         foreach {key value} {ob_host 127.0.0.1 ob_port 2881 ob_tenant {} ob_cluster {} ob_query_timeout 120} {
             if {[dict exists $configuration connection $key]} {set value [dict get $configuration connection $key]}
             dict set defaults connection $key $value
@@ -29,6 +26,10 @@ namespace eval oceanbaseconfig {
         if {[dict exists $configuration connection ob_oracle_options]} {
             dict for {group values} [dict get $configuration connection ob_oracle_options] {
                 if {$group ni {connection tpcc tpch}} {error "Unknown OceanBase Oracle options group: $group"}
+                if {$group eq "connection"} {
+                    # Former OCI-only settings have no libobclient equivalent.
+                    set values [dict remove $values obci_library instance]
+                }
                 dict set defaults $group [dict merge [dict get $defaults $group] $values]
             }
         }

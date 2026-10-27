@@ -1,4 +1,13 @@
 namespace eval oceanbase::oracle {
+    proc driver_commands {script} {
+        # Rewrite only OB's copy of the native Oracle script. Every database
+        # call stays at its original transaction/commit boundary.
+        regsub -all {\m(oraopen|oraparse|orabind|oraexec|orasql|oraplexec|orafetch|oramsg|oraclose|oralogoff|oraautocom|oracommit|oraroll)\M} \
+            $script {::oceanbaseoracledriver::\1} script
+        regsub -all {\moralogon\M} $script {::oceanbaseoraclecommon::logon} script
+        regsub -all {(^|\n)set library [^\n]*} $script {\1set library oboracle} script
+        return $script
+    }
     proc procedure_definition {script name} {
         set start [string first "proc $name \{" $script]
         if {$start < 0} {error "OceanBase Oracle adapter: missing native procedure $name"}
@@ -87,7 +96,7 @@ namespace eval oceanbase::oracle {
         # Create it alongside the benchmark user, not in each loader session.
         set original [procedure_definition $script CreateUser]
         set body [lindex $original 3]
-        append body "\n::oceanbaseoracleschema::prepare \$lda $workload [list $owner]"
+        append body "\n::oceanbaseoracleschema::prepare \$lda $workload \$${workload}_user"
         set script [string map [list $original [list proc CreateUser [lindex $original 2] $body]] $script]
         foreach name {CreateTables CreateIndexes} {
             set original [procedure_definition $script $name]
@@ -132,27 +141,6 @@ namespace eval oceanbase::oracle {
         tsv::set application abort 1
     }}
         return [string replace $script $start [expr {$start + [string length $branch] - 1}] $replacement]
-    }
-
-    proc rewrite_date_outputs {script} {
-        # OBCI 2.1.1.4 allocates a short Oracle DATE buffer for an implicit
-        # PL/SQL OUT result, then libobclient writes a MYSQL_TIME into it.
-        # Keep the stored procedures and DATE columns intact. Convert only
-        # the two client-facing DATE outputs in their anonymous call blocks.
-        set lines {}
-        foreach line [split $script \n] {
-            if {[regexp {^\s*set (sql_py|sql_os) "BEGIN (payment|ostat)\(} $line -> variable procedure]} {
-                set bind [expr {$procedure eq "payment" ? "p_c_since" : "os_entdate"}]
-                set sql [string map [list :$bind hdb_date] [lindex $line 2]]
-                set sql [string replace $sql 0 4 {DECLARE hdb_date DATE; BEGIN}]
-                set end [string last {END;} $sql]
-                if {$end < 0} {error "OceanBase Oracle adapter: incomplete $procedure call"}
-                set sql [string replace $sql $end end ":$bind := TO_CHAR(hdb_date,'YYYY-MM-DD HH24:MI:SS'); END;"]
-                set line [list set $variable $sql]
-            }
-            lappend lines $line
-        }
-        return [join $lines \n]
     }
 
     proc rewrite_refresh {script} {
@@ -200,8 +188,6 @@ namespace eval oceanbase::oracle {
         if {$action eq "build" && [dict get $native $workload distributed_schema] eq "true"} {
             append setup "package require oceanbaseoracleschema\n"
         }
-        set script [string map [list $marker "$setup$marker"] $script]
-        set script [string map [list {oralogon } {::oceanbaseoraclecommon::logon }] $script]
         if {$action eq "build"} {
             set script [rewrite_schema $script $workload]
             if {[dict get $native $workload distributed_schema] eq "true"} {
@@ -209,20 +195,7 @@ namespace eval oceanbase::oracle {
             }
         }
         if {$action eq "timed"} {set script [rewrite_monitor $script]}
-        if {$workload eq "tpcc" && $action in {test timed}} {set script [rewrite_date_outputs $script]}
         if {$workload eq "tpch" && $action eq "test"} {set script [rewrite_refresh $script]}
-        # OceanBase initializes random state for each session; the obsolete
-        # Oracle INITIALIZE entry point is not required.
-        set script [string map [list \
-            {NLS_LANGUAGE = AMERICAN} {NLS_LANGUAGE = 'AMERICAN'} \
-            {NLS_TERRITORY = AMERICA} {NLS_TERRITORY = 'AMERICA'} \
-            {BEGIN DBMS_RANDOM.initialize (val => TO_NUMBER(TO_CHAR(SYSDATE,'MMSS')) * (USERENV('SESSIONID') - TRUNC(USERENV('SESSIONID'),-5))); END;} {BEGIN NULL; END;} \
-            {parallel (degree $degree_of_parallel)} {parallel $degree_of_parallel}] $script]
-        if {$workload eq "tpch"} {
-            # Native mk_time returns YYYY-MON-DD while the INSERT mask uses
-            # YYYY-MM-DD. OceanBase requires a numeric month for that mask.
-            set script [string map [list {[ mk_time $d ]} {[ mk_time_bcp $d ]}] $script]
-        }
         # Replace generated Tcl credential assignments/calls with list-safe
         # commands. Passwords are values, never evaluated as Tcl source.
         set c [dict get $native connection]
@@ -232,6 +205,7 @@ namespace eval oceanbase::oracle {
         set sys [dict get $c system_user]
         set syspass [::oceanbase::mysql::decode_password [dict get $c system_password]]
         set instance hdb_ob_[string tolower $user]
+        set values {}
         if {$action in {test timed cloud}} {
             foreach {variable value raw_user raw_password label} [list \
                     connect "$user/$pass@$instance" $user [dict get $w ${workload}_pass] [expr {$workload eq "tpcc" ? "tpc-c" : "tpc-h"}] \
@@ -239,7 +213,9 @@ namespace eval oceanbase::oracle {
                 set pattern "\nset $variable $raw_user/[quotemeta $raw_password]@[dict get $c instance] ;# Oracle connect string for $label user"
                 set start [string first $pattern $script]
                 if {$start >= 0} {
-                    set script [string replace $script [expr {$start+1}] [expr {$start+[string length $pattern]-1}] [list set $variable $value]]
+                    set placeholder "# HDB_OB_LITERAL_$variable"
+                    set script [string replace $script [expr {$start+1}] [expr {$start+[string length $pattern]-1}] $placeholder]
+                    lappend values $placeholder [list set $variable $value]
                 } elseif {[string first "\nset $variable " $script] >= 0} {
                     error "OceanBase Oracle adapter: missing native credential assignment for $variable"
                 }
@@ -263,8 +239,25 @@ namespace eval oceanbase::oracle {
             }
             set start [string last "\n$command " $script]
             if {$start < 0} {error "OceanBase Oracle adapter: missing schema entry point $command"}
-            set script "[string range $script 0 $start][list $command {*}$args]\n"
+            set placeholder {# HDB_OB_LITERAL_SCHEMA_ENTRY}
+            set script "[string range $script 0 $start]$placeholder\n"
+            lappend values $placeholder [list $command {*}$args]
         }
-        return $script
+        # OceanBase initializes random state for each session; the obsolete
+        # Oracle INITIALIZE entry point is not required.
+        set script [string map [list \
+            {NLS_LANGUAGE = AMERICAN} {NLS_LANGUAGE = 'AMERICAN'} \
+            {NLS_TERRITORY = AMERICA} {NLS_TERRITORY = 'AMERICA'} \
+            {BEGIN DBMS_RANDOM.initialize (val => TO_NUMBER(TO_CHAR(SYSDATE,'MMSS')) * (USERENV('SESSIONID') - TRUNC(USERENV('SESSIONID'),-5))); END;} {BEGIN NULL; END;} \
+            {parallel (degree $degree_of_parallel)} {parallel $degree_of_parallel}] $script]
+        if {$workload eq "tpch"} {
+            # Native mk_time returns YYYY-MON-DD while the INSERT mask uses
+            # YYYY-MM-DD. OceanBase requires a numeric month for that mask.
+            set script [string map [list {[ mk_time $d ]} {[ mk_time_bcp $d ]}] $script]
+        }
+        # Insert configuration values only after rewriting command names. A
+        # password containing an API name (or Tcl source) must remain literal.
+        set script [driver_commands $script]
+        return [string map [concat [list $marker $setup] $values] $script]
     }
 }

@@ -1,4 +1,4 @@
-# Offline Oracle-mode configuration and OBCI connection-format regression tests.
+# Offline Oracle-mode configuration and libobclient connection regression tests.
 set argv {}
 package require tcltest 2
 namespace import ::tcltest::*
@@ -17,87 +17,95 @@ test oracle-options-isolation {Saved Oracle options leave the MySQL options inta
     set native [oceanbaseconfig::oracle_options $configured]
     list [dict get $native tpcc tpcc_user] [dict get $native tpcc count_ware] [dict get $configured tpcc ob_user]
 } -result {ora_user 7 root}
-test oracle-library-default {A portable driver default does not override a saved library path} -setup {
-    set had_library [info exists ::env(OBCI_LIBRARY)]
-    if {$had_library} {set saved_library $::env(OBCI_LIBRARY)}
-    set ::env(OBCI_LIBRARY) /portable/libobci.so
-} -body {
+test oracle-library-migration {Legacy OCI controls disappear without altering credentials or SSL} -body {
     set configured $baseline
-    set default [dict get [oceanbaseconfig::oracle_options $configured] connection obci_library]
-    dict set configured connection ob_oracle_options {connection {obci_library /saved/libobci.so}}
-    list $default [dict get [oceanbaseconfig::oracle_options $configured] connection obci_library]
-} -cleanup {
-    if {$had_library} {set ::env(OBCI_LIBRARY) $saved_library} else {unset ::env(OBCI_LIBRARY)}
-} -result {/portable/libobci.so /saved/libobci.so}
-test oracle-tns {Tenant qualification is carried by OBCI, outside Oratcl's username parser} -body {
-    set tns [oceanbaseoraclecommon::tns host 2883 tenant cluster {} {sys tpcc}]
-    list [string match {*OB_USER_EXTRA_INFO=@tenant#cluster*} $tns] [string match {*SERVICE_NAME=tpcc*} $tns] [llength [split [string trim $tns] \n]]
-} -result {1 1 2}
-test oracle-tns-cloud {Cloud endpoints can omit tenant and cluster qualification} -body {
-    string match {*OB_USER_EXTRA_INFO*} [oceanbaseoraclecommon::tns host 2883 {} {} {} {sys tpcc}]
-} -result 0
-test oracle-tns-injection {TNS values cannot inject another descriptor} -body {
-    oceanbaseoraclecommon::tns {host)(PORT=1} 2883 tenant {} {} {sys tpcc}
-} -returnCodes error -match glob -result {Invalid*host*}
-test oracle-tns-qualified {Reject a qualified user before constructing a TNS file} -body {
-    oceanbaseoraclecommon::tns host 2883 tenant {} {} {sys@tenant}
+    dict set configured connection ob_oracle_options {connection {obci_library /old/libobci.so instance old_service system_user admin ob_ssl_ca custom.pem}}
+    set c [dict get [oceanbaseconfig::oracle_options $configured] connection]
+    list [dict exists $c obci_library] [dict get $c instance] [dict get $c system_user] [dict get $c ob_ssl_ca]
+} -result {0 {} admin custom.pem}
+foreach key {obci_library instance} {
+    test oracle-retired-option-$key {New CLI settings cannot silently select an unused OCI option} -body {
+        oceanbase::oracle::set_option connection $key ignored
+    } -returnCodes error -match glob -result {*retired OCI option*}
+}
+test oracle-username {Tenant and cluster qualify the protocol username directly} -body {
+    oceanbaseoraclecommon::username tpcc {tenant tenant cluster cluster}
+} -result tpcc@tenant#cluster
+test oracle-username-cloud {Cloud endpoints can omit tenant and cluster qualification} -body {
+    oceanbaseoraclecommon::username TEST {tenant {} cluster {}}
+} -result TEST
+test oracle-username-qualified {Reject a qualified user instead of silently double-qualifying it} -body {
+    oceanbaseoraclecommon::username sys@tenant {tenant tenant cluster {}}
 } -returnCodes error -match glob -result {Invalid*user*}
-test oracle-tns-cluster {Cluster routing requires a tenant} -body {
-    oceanbaseoraclecommon::tns host 2883 {} cluster {} {sys}
+test oracle-endpoint-cluster {Cluster routing requires a tenant} -body {
+    oceanbaseoraclecommon::validate_endpoint {host host port 2883 tenant {} cluster cluster}
 } -returnCodes error -match glob -result {*tenant is required*}
-test oracle-password {Fail clearly for a password Oratcl cannot represent} -body {
-    oceanbaseoraclecommon::connect tpcc {pass@word}
-} -returnCodes error -match glob -result {*cannot encode @*}
-test oracle-configure-retry {Fixing a failed driver load cannot retain an earlier tenant descriptor} -setup {
-    set had_tns [info exists ::env(OBCI_TNS_FILE)]
-    if {$had_tns} {set saved_tns $::env(OBCI_TNS_FILE)}
+test oracle-endpoint-port {Reject an invalid port before connecting} -body {
+    oceanbaseoraclecommon::validate_endpoint {host host port 0 tenant {} cluster {}}
+} -returnCodes error -match glob -result {*port*}
+test oracle-configure-retry {A failed load cannot commit partially configured endpoints} -setup {
     rename ::oceanbaseoraclecommon::load_driver ::oceanbaseoraclecommon::test_load_driver
-    proc ::oceanbaseoraclecommon::load_driver {library} {
-        if {$library eq "missing"} {error "Missing library"}
-        return 4.6.1
+    set ::driver_load_attempt 0
+    proc ::oceanbaseoraclecommon::load_driver {} {
+        if {[incr ::driver_load_attempt] == 1} {error "Missing library"}
+        return 1.0
     }
 } -body {
-    catch {oceanbaseoraclecommon::configure {missing old.example 2881 old_tenant {} {} {sys tpcc}}}
-    oceanbaseoraclecommon::configure {available new.example 2881 new_tenant {} {} {sys tpcc}} 120 true
-    set f [open $::env(OBCI_TNS_FILE)]
-    set descriptor [read $f]
-    close $f
-    list [string match {*HOST=new.example*OB_USER_EXTRA_INFO=@new_tenant*} $descriptor] \
-        [string match {*old_tenant*} $descriptor] \
-        [string equal [lindex [split [string trim $descriptor] \n] end] {OBCISYSTEMVARIABLES=(OB_ENABLE_SSL=1)}]
+    catch {oceanbaseoraclecommon::configure {host old.example port 2881 tenant old_tenant cluster {} users {sys tpcc}}}
+    oceanbaseoraclecommon::configure {host new.example port 2881 tenant new_tenant cluster {} users {sys tpcc}} 120 {-ssl true}
+    set e [dict get $::oceanbaseoraclecommon::endpoints hdb_ob_tpcc]
+    list [dict get $e host] [dict get $e tenant] $::oceanbaseoraclecommon::connection_options
 } -cleanup {
-    file delete $::oceanbaseoraclecommon::tns_file
-    set ::oceanbaseoraclecommon::tns_file {}
     set ::oceanbaseoraclecommon::connection_options {}
+    set ::oceanbaseoraclecommon::endpoints {}
     rename ::oceanbaseoraclecommon::load_driver {}
     rename ::oceanbaseoraclecommon::test_load_driver ::oceanbaseoraclecommon::load_driver
-    if {$had_tns} {set ::env(OBCI_TNS_FILE) $saved_tns} else {unset -nocomplain ::env(OBCI_TNS_FILE)}
-} -result {1 0 1}
+    unset ::driver_load_attempt
+} -result {new.example new_tenant {-ssl true}}
+test oracle-bind-lexer {Only placeholders outside literals, quoted names and comments are converted} -body {
+    oceanbaseoracledriver::bind_sql {BEGIN p(:x,:X,':skip',q'[a':skip]',"colon:name"); -- :skip
+/* :skip */ :out := :value; END;}
+} -result {{BEGIN p(?,?,':skip',q'[a':skip]',"colon:name"); -- :skip
+/* :skip */ ? := ?; END;} {:X :X :OUT :VALUE}}
 test oracle-ssl-default {Oracle SSL is independent of the MySQL switch} -body {
     set configured $baseline
     dict set configured connection ob_ssl true
     set connection [dict get [oceanbaseconfig::oracle_options $configured] connection]
     dict get $connection ob_ssl
 } -result false
-test oracle-ssl-official-switch {Encryption-only SSL uses the official switch} -body {
+test oracle-ssl-switch {No CA is optional just as in the MySQL SSL form} -body {
     set c [dict get [oceanbaseconfig::oracle_options $baseline] connection]
     dict set c ob_ssl true
     dict set c ob_ssl_ca {}
     dict set c ob_ssl_linux_capath {}
     dict set c ob_ssl_windows_capath {}
     oceanbaseoraclecommon::ssl_setting $c
-} -result true
-test oracle-ssl-certificates-not-ignored {Retained certificate fields cannot silently pretend to verify the server} -body {
+} -result {-ssl true}
+test oracle-ssl-ca-mapping {A populated CA is validated and passed to the same C option as MySQL} -setup {
+    set ca [makeFile {test CA} oracle-ca.pem]
+} -body {
     set c [dict get [oceanbaseconfig::oracle_options $baseline] connection]
     dict set c ob_ssl true
+    dict set c ob_ssl_ca $ca
+    dict set c ob_ssl_linux_capath {}
+    dict set c ob_ssl_windows_capath {}
+    list [expr {[oceanbaseoraclecommon::ssl_setting $c] eq [oceanbasecommon::ssl_options [dict create connection $c]]}] \
+        [dict get [oceanbaseoraclecommon::ssl_setting $c] -sslca]
+} -cleanup {removeFile oracle-ca.pem} -result [list 1 [file join [temporaryDirectory] oracle-ca.pem]]
+test oracle-ssl-ca-unreadable {Do not silently ignore an explicitly configured CA} -body {
+    set c [dict get [oceanbaseconfig::oracle_options $baseline] connection]
+    dict set c ob_ssl true
+    dict set c ob_ssl_ca /nonexistent/hdb-test-ca.pem
     oceanbaseoraclecommon::ssl_setting $c
-} -returnCodes error -match glob -result {Official OBCI certificate*has not been verified.*}
+} -returnCodes error -match glob -result {SSL CA file is not readable:*}
 test oracle-insert-empty {A silently skipped insert fails the schema build} -setup {
-    proc ::oraexec {cursor} {return 0}
-    proc ::oramsg {args} {return 0}
+    rename ::oceanbaseoracledriver::oraexec ::oceanbaseoracledriver::saved_exec
+    rename ::oceanbaseoracledriver::oramsg ::oceanbaseoracledriver::saved_msg
+    proc ::oceanbaseoracledriver::oraexec {cursor} {return 0}
+    proc ::oceanbaseoracledriver::oramsg {args} {return 0}
 } -body {
     oceanbaseoraclecommon::exec_insert cursor
-} -cleanup {rename ::oraexec {}; rename ::oramsg {}} -returnCodes error -match glob -result {*inserted no rows*}
+} -cleanup {rename ::oceanbaseoracledriver::oraexec {}; rename ::oceanbaseoracledriver::oramsg {}; rename ::oceanbaseoracledriver::saved_exec ::oceanbaseoracledriver::oraexec; rename ::oceanbaseoracledriver::saved_msg ::oceanbaseoracledriver::oramsg} -returnCodes error -match glob -result {*inserted no rows*}
 test oracle-cli-options {CLI changes the active Oracle profile and preserves MySQL and native Oracle settings} -setup {
     set saved_ob $::configoceanbase
     set saved_ora $::configoracle

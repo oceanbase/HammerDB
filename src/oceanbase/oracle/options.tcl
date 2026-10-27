@@ -46,8 +46,7 @@ namespace eval oceanbase::oracle {
             lassign $field key label kind
             ::oceanbase::mysql::option_row $frame [incr row] oracle_connection $key $label $kind
         }
-        foreach field {{instance {OBCI Service Name (optional)} entry} {obci_library {OBCI Library} entry}
-                {system_user {System User} entry} {system_password {System User Password} password}} {
+        foreach field {{system_user {System User} entry} {system_password {System User Password} password}} {
             lassign $field key label kind
             ::oceanbase::mysql::option_row $frame [incr row] oracle_connection $key $label $kind
         }

@@ -1,145 +1,81 @@
-# OBCI uses OCI APIs over the OceanBase protocol. In particular, Oratcl's
-# first-@ connection parser cannot accept user@tenant as a username; OBCI's
-# TNS OB_USER_EXTRA_INFO field carries that suffix instead.
+# Oracle SQL and workloads use libobclient directly; SSL options are shared
+# with the OceanBase MySQL backend. No OCI/TNS configuration is involved.
+if {[catch {package require oceanbaseoracledriver}]} {
+    source [file join [file dirname [info script]] oceanbaseoracledriver-1.0.tm]
+}
 namespace eval oceanbaseoraclecommon {
-    variable driver_library {}
-    variable tns_file {}
+    namespace path ::oceanbaseoracledriver
     variable connection_options {}
     variable query_timeout 120
-    variable allowed_aliases {}
+    variable endpoints {}
     variable pool_configuration {}
 
-    proc component {value label {empty false}} {
-        if {(!$empty && $value eq "") || [regexp {[()=\s\x00]} $value]} {
-            error "Invalid OceanBase Oracle $label"
+    proc validate_endpoint {endpoint} {
+        foreach key {host tenant cluster} {
+            set value [dict get $endpoint $key]
+            if {($key eq "host" && $value eq "") || [regexp {[\s\x00]} $value]} {
+                error "Invalid OceanBase Oracle $key"
+            }
+            if {$key ne "host" && [regexp {[@#]} $value]} {error "Use separate OceanBase tenant and cluster fields"}
         }
-        return $value
-    }
-
-    proc tns {host port tenant cluster service users} {
-        component $host host
+        set port [dict get $endpoint port]
         if {![string is integer -strict $port] || $port < 1 || $port > 65535} {error "Invalid OceanBase Oracle port"}
-        foreach {value label} [list $tenant tenant $cluster cluster] {
-            component $value $label true
-            if {[regexp {[@#]} $value]} {error "Use separate OceanBase tenant and cluster fields"}
-        }
-        if {$cluster ne "" && $tenant eq ""} {error "OceanBase tenant is required with a cluster"}
-        component $service {service name} true
-        set suffix {}
-        if {$tenant ne ""} {append suffix @$tenant}
-        if {$cluster ne ""} {append suffix #$cluster}
-        set result {}
-        foreach user [lsort -unique $users] {
-            # These are also schema identifiers, not already-qualified logins.
-            if {![regexp {^[A-Za-z][A-Za-z0-9_$#]*$} $user]} {error "Invalid OceanBase Oracle user: use an unquoted schema name"}
-            set sid [expr {$service eq "" ? $user : $service}]
-            append result "hdb_ob_[string tolower $user] = (DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=$host)(PORT=$port))(CONNECT_DATA=(SERVICE_NAME=$sid)"
-            if {$suffix ne ""} {append result "(OB_MODE=1)(OB_USER_EXTRA_INFO=$suffix)"}
-            append result "))\n"
-        }
-        return $result
+        if {[dict get $endpoint cluster] ne "" && [dict get $endpoint tenant] eq ""} {error "OceanBase tenant is required with a cluster"}
     }
-
-    proc load_driver {library} {
-        variable driver_library
-        set library [file normalize $library]
-        if {![file isfile $library] || ![file readable $library]} {
-            error "OBCI library is not readable: $library. Install OBCI and libobclient and set their library directory in LD_LIBRARY_PATH before starting HammerDB."
-        }
-        if {[package provide Oratcl] ne "" && $driver_library ne $library} {
-            error "Oratcl is already loaded with another client. Start a separate HammerDB process for OceanBase Oracle mode."
-        }
-        set ::env(ORACLE_LIBRARY) $library
-        # Allow an isolated corrected package without replacing the package
-        # bundled in HammerDB (including a zipfs/starpack installation).
-        if {[package provide Oratcl] eq "" && [info exists ::env(OBCI_ORATCL_LIBRARY)]} {
-            set corrected [file normalize $::env(OBCI_ORATCL_LIBRARY)]
-            if {![file isfile $corrected] || ![file readable $corrected]} {error "Corrected Oratcl library is not readable: $corrected"}
-            load $corrected Oratcl
-        }
-        set version [package require Oratcl]
-        if {[package provide OratclOCI32] eq ""} {
-            error "OceanBase Oracle mode requires the OCI-width-corrected Oratcl build. See scripts/tcl/oceanbase/oracle/build-oratcl.sh; the stock Tcl 9 array-bind callback is incompatible with OBCI."
-        }
-        set driver_library $library
-        return $version
+    proc username {user endpoint} {
+        if {![regexp {^[A-Za-z][A-Za-z0-9_$#]*$} $user]} {error "Invalid OceanBase Oracle user: use an unquoted schema name"}
+        if {[dict get $endpoint tenant] ne ""} {append user @[dict get $endpoint tenant]}
+        if {[dict get $endpoint cluster] ne ""} {append user #[dict get $endpoint cluster]}
+        return $user
     }
-
+    proc load_driver {} {
+        if {[catch {package require oboracle 1.0} message options]} {
+            return -options $options "Unable to load the OceanBase Oracle libobclient binding: $message. Build scripts/tcl/oceanbase/oracle/build-driver.sh and make the official libobclnt.so.2 available on the library path."
+        }
+        return [package provide oboracle]
+    }
     proc ssl_setting {connection} {
-        set enabled [dict get $connection ob_ssl]
         foreach key {ob_ssl ob_ssl_two_way} {
             if {[dict get $connection $key] ni {true false}} {error "$key must be true or false"}
         }
-        if {$enabled eq "false"} {return false}
-        # Only the vendor's encryption switch has been verified. Retain the
-        # shared UI fields without silently claiming to apply certificates.
-        set capath [expr {$::tcl_platform(platform) eq "windows" ? "ob_ssl_windows_capath" : "ob_ssl_linux_capath"}]
-        if {[dict get $connection ob_ssl_two_way] eq "true" ||
-                [dict get $connection $capath] ne "" || [dict get $connection ob_ssl_ca] ne "" ||
-                [dict get $connection ob_ssl_cipher] ni {{} server}} {
-            error "Official OBCI certificate, mutual SSL and cipher configuration has not been verified. For encryption-only SSL, clear SSL CApath and SSL CA, select One-Way and leave SSL Cipher as server."
-        }
-        return true
+        package require oceanbasecommon
+        return [::oceanbasecommon::ssl_options [dict create connection $connection]]
     }
-
-    proc configure {settings {timeout 120} {ssl false}} {
+    proc configure {settings {timeout 120} {ssl {-ssl false}}} {
         variable connection_options
-        variable tns_file
         variable query_timeout
+        variable endpoints
         if {![string is integer -strict $timeout] || $timeout < 1 || $timeout > 86400} {error "Invalid OceanBase Oracle query timeout"}
-        if {$ssl ni {true false}} {error "ob_ssl must be true or false"}
-        set query_timeout $timeout
-        variable allowed_aliases
-        set text [tns {*}[lrange $settings 1 6]]
+        validate_endpoint $settings
         set aliases {}
-        foreach user [lindex $settings 6] {lappend aliases hdb_ob_[string tolower $user]}
-        if {[llength $settings] > 7} {
-            foreach endpoint [lindex $settings 7] {
-                dict with endpoint {
-                    set descriptor [tns $host $port $tenant $cluster $service [list $user]]
-                    append text [string map [list hdb_ob_[string tolower $user] $alias] $descriptor]
-                    lappend aliases $alias
-                }
+        foreach user [dict get $settings users] {
+            username $user $settings
+            dict set aliases hdb_ob_[string tolower $user] $settings
+        }
+        if {[dict exists $settings endpoints]} {
+            foreach endpoint [dict get $settings endpoints] {
+                validate_endpoint $endpoint
+                username [dict get $endpoint user] $endpoint
+                dict set aliases [dict get $endpoint alias] $endpoint
             }
         }
-        # OBCI 2.1.1.4 reads this global section from its TNS file. Keep it
-        # after every alias, including pool routes, for the vendor parser.
-        append text "OBCISYSTEMVARIABLES=(OB_ENABLE_SSL=[expr {$ssl eq {true} ? 1 : 0}])\n"
-        set signature [list $settings $ssl]
-        if {$connection_options ne "" && $connection_options ne $signature} {
-            error "OceanBase Oracle connection or SSL settings changed after driver initialization; start a new HammerDB process"
-        }
-        if {$tns_file eq ""} {
-            set channel [file tempfile tns_file [file join [expr {[info exists ::env(TMPDIR)] ? $::env(TMPDIR) : [pwd]}] hdb-obci-]]
-            try {puts -nonewline $channel $text} finally {close $channel}
-            if {$::tcl_platform(platform) ne "windows"} {file attributes $tns_file -permissions 0600}
-        }
-        set ::env(OBCI_TNS_FILE) $tns_file
-        try {
-            set result [load_driver [lindex $settings 0]]
-        } on error {message options} {
-            # A retry after fixing a missing library must not reuse an old
-            # tenant descriptor if the user has also edited the connection.
-            catch {file delete $tns_file}
-            set tns_file {}
-            unset -nocomplain ::env(OBCI_TNS_FILE)
-            return -options $options $message
-        }
-        set connection_options $signature
-        set allowed_aliases $aliases
-        return $result
+        dict size $ssl
+        load_driver
+        set query_timeout $timeout
+        set connection_options $ssl
+        set endpoints $aliases
+        return [package provide oboracle]
     }
-
     proc connect {user password {alias {}}} {
-        if {[string first @ $password] >= 0} {
-            error "This Oratcl build cannot encode @ in a password; use an account with a different password"
-        }
-        if {![regexp {^[A-Za-z][A-Za-z0-9_$#]*$} $user]} {error "Invalid OceanBase Oracle user"}
         variable query_timeout
-        variable allowed_aliases
+        variable endpoints
+        variable connection_options
         if {$alias eq ""} {set alias hdb_ob_[string tolower $user]}
-        if {$alias ni $allowed_aliases} {error "Unknown OceanBase Oracle connection alias"}
-        set lda [oralogon "$user/$password@$alias"]
+        if {![dict exists $endpoints $alias]} {error "Unknown OceanBase Oracle connection alias"}
+        set endpoint [dict get $endpoints $alias]
+        set options [dict merge [dict create -host [dict get $endpoint host] -port [dict get $endpoint port] \
+            -user [username $user $endpoint] -password $password] $connection_options]
+        set lda [::oboracle::connect $options]
         set cursor [oraopen $lda]
         try {
             orasql $cursor "SET SESSION ob_query_timeout=[expr {wide($query_timeout)*1000000}]"
@@ -149,42 +85,33 @@ namespace eval oceanbaseoraclecommon {
         } finally {catch {oraclose $cursor}}
         return $lda
     }
-
     proc logon {connection} {
-        # Native Oracle generators build user/password@instance. Keep the
-        # actual tenant suffix in the TNS descriptor, not in that string.
+        # The generators still pass user/password@alias. Split at the final @
+        # so passwords containing @, / or Tcl metacharacters remain values.
         set slash [string first / $connection]
-        set at [string first @ $connection]
+        set at [string last @ $connection]
         if {$slash < 1 || $at <= $slash} {error "Invalid generated OceanBase Oracle connection"}
         set alias [string range $connection [expr {$at+1}] end]
-        # Native schema builders use the future benchmark service name even
-        # for the administrator login, before that schema exists. Keep the
-        # configured per-user descriptor except for explicit pool routes.
         if {![string match hdb_ob_pool_c? $alias]} {set alias {}}
         return [connect [string range $connection 0 [expr {$slash-1}]] [string range $connection [expr {$slash+1}] [expr {$at-1}]] $alias]
     }
-
     proc pool_config {pool settings user password} {
         if {![dict exists $pool connections] || ![dict exists $pool sprocs]} {error "OceanBase Oracle pool needs connections and sprocs"}
         set endpoints {}
         set connections {}
         dict for {id values} [dict get $pool connections] {
             if {![regexp {^c[1-9]$} $id]} {error "OceanBase Oracle pool connection IDs must be c1 to c9"}
-            set endpoint [dict create host [lindex $settings 1] port [lindex $settings 2] tenant [lindex $settings 3] \
-                cluster [lindex $settings 4] service [lindex $settings 5] user $user alias hdb_ob_pool_$id]
+            set endpoint [dict merge [dict remove $settings users endpoints] [dict create user $user alias hdb_ob_pool_$id]]
             set pass $password
-            foreach {key mapped} {ob_host host ob_port port ob_tenant tenant ob_cluster cluster instance service tpcc_user user} {
+            foreach {key mapped} {ob_host host ob_port port ob_tenant tenant ob_cluster cluster tpcc_user user} {
                 if {[dict exists $values $key]} {dict set endpoint $mapped [dict get $values $key]}
             }
             if {[dict exists $values tpcc_pass]} {set pass [dict get $values tpcc_pass]}
-            # Every endpoint must target the same tenant and benchmark schema.
-            # Cluster Connect Pool routes transactions, not independent datasets.
-            foreach key {tenant cluster user} expected [list [lindex $settings 3] [lindex $settings 4] $user] {
+            foreach key {tenant cluster user} expected [list [dict get $settings tenant] [dict get $settings cluster] $user] {
                 if {![string equal -nocase [dict get $endpoint $key] $expected]} {error "OceanBase Oracle pool endpoints must use the same tenant, cluster and benchmark user"}
             }
-            if {[string first @ $pass] >= 0} {error "This Oratcl build cannot encode @ in a pool password"}
-            tns [dict get $endpoint host] [dict get $endpoint port] [dict get $endpoint tenant] [dict get $endpoint cluster] \
-                [dict get $endpoint service] [list [dict get $endpoint user]]
+            validate_endpoint $endpoint
+            username [dict get $endpoint user] $endpoint
             lappend endpoints $endpoint
             dict set connections $id [dict create tpcc_user [dict get $endpoint user] tpcc_pass $pass instance [dict get $endpoint alias]]
         }
@@ -198,16 +125,14 @@ namespace eval oceanbaseoraclecommon {
         }
         return [list [dict replace $pool connections $connections] $endpoints]
     }
-
-    proc configure_pool {settings timeout user password {ssl false}} {
+    proc configure_pool {settings timeout user password {ssl {-ssl false}}} {
         variable pool_configuration
         package require tpcccommon
         set pool [::tpcccommon::get_connect_xml obora]
         lassign [pool_config $pool $settings $user $password] pool endpoints
-        configure [linsert $settings end $endpoints] $timeout $ssl
+        configure [dict replace $settings endpoints $endpoints] $timeout $ssl
         set pool_configuration $pool
     }
-
     proc get_pool_config {} {
         variable pool_configuration
         if {$pool_configuration eq ""} {error "OceanBase Oracle pool was not configured"}
@@ -230,7 +155,7 @@ namespace eval oceanbaseoraclecommon {
     proc exec_insert {cursor} {
         set result [oraexec $cursor]
         if {[oramsg $cursor rows] == 0} {
-            error "OBCI schema insert reported success but inserted no rows; check array bindings"
+            error "OceanBase schema insert reported success but inserted no rows"
         }
         return $result
     }

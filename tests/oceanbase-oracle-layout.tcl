@@ -5,19 +5,19 @@ namespace import ::tcltest::*
 package require oceanbaseoracleschema
 package require oceanbaseoraclecommon
 package require tpcccommon
-set settings {/test/libobci.so host 2881 tenant cluster {} {sys tpcc tpch}}
+set settings {host host port 2881 tenant tenant cluster cluster users {sys tpcc tpch}}
 set pool [::tpcccommon::get_connect_xml obora]
 
 test oracle-bootstrap-alias {Administrator logins do not select a not-yet-created benchmark schema; pools keep their route} -setup {
     rename ::oceanbaseoraclecommon::connect ::oceanbaseoraclecommon::test_real_connect
     proc ::oceanbaseoraclecommon::connect {args} {return $args}
 } -body {
-    list [oceanbaseoraclecommon::logon sys/password@hdb_ob_new_schema] \
+    list [oceanbaseoraclecommon::logon sys/pass@word@hdb_ob_new_schema] \
         [oceanbaseoraclecommon::logon tpcc/password@hdb_ob_pool_c1]
 } -cleanup {
     rename ::oceanbaseoraclecommon::connect {}
     rename ::oceanbaseoraclecommon::test_real_connect ::oceanbaseoraclecommon::connect
-} -result {{sys password {}} {tpcc password hdb_ob_pool_c1}}
+} -result {{sys pass@word {}} {tpcc password hdb_ob_pool_c1}}
 
 test oracle-pool-inherit {Oracle pool inherits the active profile without reading MySQL pool credentials} -body {
     lassign [oceanbaseoraclecommon::pool_config $pool $settings tpcc {a;[literal]$x}] mapped endpoints

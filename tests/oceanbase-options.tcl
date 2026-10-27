@@ -306,8 +306,10 @@ test options-oracle-tls-controls {Oracle uses the same SSL controls with indepen
     set mysql $::oceanbase::mysql::options(connection,ob_ssl_ca)
     select_ob_mode oracle
     list $before $one_way $two_way $mysql $::oceanbase::mysql::options(oracle_connection,ob_ssl_ca) \
-        [info exists ::oceanbase::mysql::option_widgets(obci_tls_library)]
-} -cleanup {destroy .oboptions} -result {1 1 0 mysql-ca.pem oracle-ca.pem 0}
+        [info exists ::oceanbase::mysql::option_widgets(obci_tls_library)] \
+        [info exists ::oceanbase::mysql::option_widgets(obci_library)] \
+        [info exists ::oceanbase::mysql::option_widgets(instance)]
+} -cleanup {destroy .oboptions} -result {1 1 0 mysql-ca.pem oracle-ca.pem 0 0 0}
 
 test options-refresh-controls {Refresh function enables update count, delay and verbose controls} -body {
     oceanbase::mysql::show_options tpch drive

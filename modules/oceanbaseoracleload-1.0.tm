@@ -1,6 +1,10 @@
-# Used only by generated schema loaders. Benchmark statements keep Oratcl's
-# original binding/execution path and never share this cursor state.
+# Used only by generated schema loaders. Benchmark prepared statements never
+# share this batch state or change the native Oracle transaction boundaries.
+if {[catch {package require oceanbaseoracledriver}]} {
+    source [file join [file dirname [info script]] oceanbaseoracledriver-1.0.tm]
+}
 namespace eval oceanbaseoracleload {
+    namespace path ::oceanbaseoracledriver
     variable cursors {}
     variable max_rows 1000
     variable max_bytes 1048576

@@ -13,7 +13,7 @@ set baseline $configoceanbase
 try {
     foreach {workload actions} {tpcc {build test timed check delete} tpch {build test check delete}} {
         foreach action $actions {
-            test oracle-generated-$workload-$action {Oracle scripts use OBCI with complete Tcl and native-category isolation} -body {
+            test oracle-generated-$workload-$action {Oracle scripts use libobclient with complete Tcl and native-category isolation} -body {
                 oceanbase::dispatch generate $workload $action
                 list [info complete $::_ED(package)] \
                     [expr {[string first {package require oceanbaseoraclecommon} $::_ED(package)] >= 0}] \
@@ -66,7 +66,7 @@ try {
             list [info complete $::_ED(package)] [expr {$position >= 0 && $position < $monitor && $monitor < $profile}]
         } -cleanup {set configoceanbase $baseline} -result {1 1}
     }
-    test oracle-pool-counter-setup {The counter and pooled drivers register the same descriptors before loading OBCI} -body {
+    test oracle-pool-counter-setup {The counter and pooled drivers register the same descriptors before loading libobclient} -body {
         dict set configoceanbase connection ob_oracle_options {tpcc {connect_pool true}}
         set setup [oceanbase::oracle::connection_setup $configoceanbase true]
         oceanbase::dispatch generate tpcc timed
@@ -77,7 +77,7 @@ try {
         oceanbase::dispatch generate tpch build
         set definition [oceanbase::oracle::procedure_definition $::_ED(package) CreateIndexes]
         set start [string first {CREATE INDEX HDB_LINEITEM_SHIPDATE_COVER_IDX} $definition]
-        list [expr {$start >= 0}] [expr {$start < [string last {oraclose $curn1} $definition]}]
+        list [expr {$start >= 0}] [expr {$start < [string last {::oceanbaseoracledriver::oraclose $curn1} $definition]}]
     } -cleanup {set configoceanbase $baseline} -result {1 1}
     test oracle-no-cloud-query {Oracle mode does not silently select an alternative Oracle analytic workload} -body {
         oceanbase::dispatch generate tpch cloud
@@ -131,7 +131,7 @@ try {
         }
         set result
     } -result {1 1 1 1}
-    test oracle-history-binds {Every HISTORY column has a distinct OBCI array binding name} -body {
+    test oracle-history-binds {Every HISTORY column has a distinct loader binding name} -body {
         oceanbase::dispatch generate tpcc build
         set definition [oceanbase::oracle::procedure_definition $::_ED(package) Customer]
         list [expr {[string first {:h_c_id, :h_c_d_id, :h_c_w_id, :h_w_id, :h_d_id} $definition] >= 0}] \
@@ -153,16 +153,16 @@ try {
             [expr {[string first {eval $statement} $definition] < [string first {foreach hdb_row} $definition]}] \
             [expr {[string first {lappend hdb_lines [list $lsdate $lokey} $definition] >= 0}]
     } -result {0 1 1}
-    test oracle-date-outputs {Call wrappers keep DATE values away from the OBCI implicit-cursor DATE buffer} -body {
+    test oracle-native-date-outputs {Native Oracle DATE outputs need no OCI buffer workaround} -body {
         set result {}
         foreach action {test timed} {
             oceanbase::dispatch generate tpcc $action
-            foreach bind {p_c_since os_entdate} {
-                lappend result [expr {[string first ":$bind := TO_CHAR(hdb_date,'YYYY-MM-DD HH24:MI:SS')" $::_ED(package)] >= 0}]
-            }
+            lappend result [expr {[string first {hdb_date} $::_ED(package)] < 0}] \
+                [expr {[string first {package require $library} $::_ED(package)] < 0}] \
+                [expr {[string first {::oceanbaseoracledriver::orabind} $::_ED(package)] >= 0}]
         }
         set result
-    } -result {1 1 1 1}
+    } -result {1 1 1 1 1 1}
     test oracle-job-metadata {Job snapshots use the active workload without saving the inactive credential profile} -setup {
         set saved_rdbms $::rdbms
         set saved_bm $::bm
@@ -180,7 +180,8 @@ try {
     } -result {7 oracle_tenant 0 0}
     test oracle-credential-values {Special characters and newlines in passwords remain literal data in generated drivers} -body {
         set result {}
-        foreach password [list {two words} {a;[error unsafe]$x} {double"quote} {back\nslash} "two\nlines"] {
+        foreach password [list {two words} {a;[error unsafe]$x} {double"quote} {back\nslash} "two\nlines" \
+                {oraexec} {oralogon value} "two\nset library private"] {
             foreach {workload action} {tpcc test tpcc timed tpch test} {
                 set configoceanbase $baseline
                 dict set configoceanbase connection ob_oracle_options [dict create $workload [dict create ${workload}_pass [quotemeta $password]]]

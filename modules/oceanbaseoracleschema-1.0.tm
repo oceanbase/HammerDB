@@ -1,5 +1,6 @@
 # OceanBase physical layout for the native Oracle logical benchmark schemas.
 namespace eval oceanbaseoracleschema {
+    namespace path ::oceanbaseoracledriver
     proc tablegroups {owner workload} {
         if {![regexp {^[A-Za-z][A-Za-z0-9_$#]*$} $owner]} {error "Invalid benchmark schema owner"}
         set name [string range [string toupper $owner] 0 40]

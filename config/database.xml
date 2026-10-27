@@ -55,7 +55,7 @@
     <prefix>ob</prefix>
     <library>mysqltcl</library>
     <workloads>TPROC-C TPROC-H</workloads>
-    <commands>mysql::sel mysqluse mysqlexec mysqlclose mysql::commit mysql::rollback</commands>
+    <commands>mysql::sel mysqluse mysqlexec mysqlclose mysql::commit mysql::rollback oboracle::connect oceanbaseoracledriver::oraopen oceanbaseoracledriver::oraparse oceanbaseoracledriver::orabind oceanbaseoracledriver::oraexec oceanbaseoracledriver::orafetch</commands>
 </oceanbase>
 <villagesql>
         <name>VillageSQL</name>

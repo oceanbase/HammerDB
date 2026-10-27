@@ -12,16 +12,16 @@ proc reset_loader {} {
     set ::commits {}
     set ::next_cursor 0
 }
-proc oraopen {lda} {return c[incr ::next_cursor]}
-proc orasql {cursor sql} {
+proc ::oceanbaseoracleload::oraopen {lda} {return c[incr ::next_cursor]}
+proc ::oceanbaseoracleload::orasql {cursor sql} {
     if {[info exists ::insert_error]} {error $::insert_error}
     lappend ::queries $sql
     set ::rowcount [lindex $::affected 0]
     set ::affected [lrange $::affected 1 end]
 }
-proc oramsg {args} {return $::rowcount}
-proc oracommit {lda} {lappend ::commits [list $lda [llength $::queries]]}
-proc oraclose {cursor} {}
+proc ::oceanbaseoracleload::oramsg {args} {return $::rowcount}
+proc ::oceanbaseoracleload::oracommit {lda} {lappend ::commits [list $lda [llength $::queries]]}
+proc ::oceanbaseoracleload::oraclose {cursor} {}
 test load-values-syntax {Values are quoted once; expressions, NULL and quoted colons survive} -setup {
     reset_loader
     set ::affected 2
