@@ -1,4 +1,6 @@
 -- OceanBase MySQL tenant: executable HammerDB TPROC-H benchmark profile.
+-- Oracle tenant: use tproch-tuning-oracle.sql instead. See README.md here for
+-- the tenant/account required by each section; this file never switches tenants.
 -- Target: OceanBase 4.4.2; check availability before using other versions.
 -- OceanBase analytical-workload tuning recommendations adapted for HammerDB.
 -- These are benchmark candidates, not production defaults or measured gains.
@@ -6,7 +8,7 @@
 -- or the OCP metadata tenant. Apply before schema creation and between runs.
 -- Example (obclient prompts for the password; do not use --force):
 -- obclient -h HOST -P PORT -u 'root@TENANT' -p --batch \
---   < scripts/sql/oceanbase/tproch-tuning.sql > tproch-tuning.log
+--   < scripts/sql/oceanbase/tproch-tuning-mysql.sql > tproch-tuning.log
 -- The first result sets capture your baseline; keep the log for restoration.
 -- Statements are not atomic: if one fails, earlier changes remain applied.
 

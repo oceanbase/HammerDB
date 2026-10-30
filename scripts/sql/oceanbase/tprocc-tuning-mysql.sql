@@ -1,4 +1,6 @@
 -- OceanBase MySQL tenant: executable HammerDB TPROC-C benchmark tuning.
+-- Oracle tenant: use tprocc-tuning-oracle.sql instead. See README.md here for
+-- the tenant/account required by each section; this file never switches tenants.
 -- OceanBase tuning recommendations adapted for HammerDB TPROC-C.
 -- These are benchmark candidates, not measured HammerDB improvements or
 -- production defaults. Check parameter availability on your OceanBase version.
@@ -7,7 +9,7 @@
 -- not root@sys. Do not apply this file to the OCP metadata tenant.
 -- Save the output below before changing anything; restore the recorded values
 -- after the experiment. Do not assume that product defaults are your baseline.
--- Example: obclient ... --batch < tprocc-tuning.sql > tuning-before.txt
+-- Example: obclient ... --batch < tprocc-tuning-mysql.sql > tuning-before.txt
 
 SELECT VERSION(), CURRENT_USER();
 SHOW GLOBAL VARIABLES WHERE Variable_name IN

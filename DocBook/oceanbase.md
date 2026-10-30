@@ -151,13 +151,16 @@ The layout also adds a local covering index on LINEITEM
 It provides a date-range access path for Q6, Q14 and Q15 while preserving the
 order-key primary key and the existing secondary indexes. The additional index
 uses storage and must also be maintained during data loading and refreshes.
-For Q7, `scripts/sql/oceanbase/tproch-tuning.sql` includes a commented optional
+For Q7, `scripts/sql/oceanbase/tproch-tuning-mysql.sql` includes a commented optional
 outline example to use this index after verifying the benefit on your workload.
+Oracle tenants use `scripts/sql/oceanbase/tproch-tuning-oracle.sql` instead.
+See `scripts/sql/oceanbase/README.md` for the tenant and account required by each
+tuning/statistics/outline section and the separate TPROC-C profiles.
 
 The default remains false for existing configurations. This option only affects
 new schema builds; it does not migrate existing tables. Use a fresh database and
 regenerate the build script. The partition count is independent of loader threads
-and query parallelism. Apply `scripts/sql/oceanbase/tproch-tuning.sql` separately
+and query parallelism. Apply `scripts/sql/oceanbase/tproch-tuning-mysql.sql` separately
 for runtime tuning. The optimized DDL requires an OceanBase version supporting
 column groups; the layout is validated on OceanBase 4.4.2.1. It retains HammerDB's query text
 and does not establish a certified TPC-H result.
