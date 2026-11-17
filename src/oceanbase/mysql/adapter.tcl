@@ -198,20 +198,37 @@ namespace eval oceanbase::mysql {
         variable options
         variable options_context
         set updated [::oceanbaseconfig::normalize $configoceanbase]
+        set previous_mode [dict get $updated connection ob_compatibility_mode]
+        set oracle_options [::oceanbaseconfig::oracle_options $updated]
         foreach entry [array names options] {
             lassign [split $entry ,] group key
             if {$group eq "counter"} {continue}
             set value $options($entry)
+            if {[string match oracle_* $group]} {
+                if {[string match *pass* $key]} {set value [quotemeta $value]}
+                dict set oracle_options [string range $group 7 end] $key $value
+                continue
+            }
             if {$key in {ob_pass ob_tpch_pass}} {set value [quotemeta $value]}
             dict set updated $group $key $value
         }
-        if {[catch {::oceanbase::validate $updated} message]} {
-            tk_messageBox -parent .oboptions -icon error -message $message
-            return
-        }
-        if {[catch {::oceanbasecommon::ssl_options $updated} message]} {
-            tk_messageBox -parent .oboptions -icon error -message $message
-            return
+        dict set updated connection ob_oracle_options $oracle_options
+        foreach mode [::oceanbase::supported_modes] {
+            set candidate $updated
+            dict set candidate connection ob_compatibility_mode $mode
+            if {[catch {
+                ::oceanbase::validate $candidate
+                if {$mode eq "mysql"} {
+                    ::oceanbasecommon::ssl_options $candidate
+                } else {
+                    ::oceanbaseoraclecommon::ssl_setting [dict get $oracle_options connection]
+                }
+            } message]} {
+                set options(connection,ob_compatibility_mode) $mode
+                render_options
+                tk_messageBox -parent .oboptions -icon error -message "[string totitle $mode] profile: $message"
+                return
+            }
         }
         if {[info exists options_context] && [lindex $options_context 1] eq "counter"} {
             set interval $options(counter,tc_refresh_rate)
@@ -242,6 +259,10 @@ namespace eval oceanbase::mysql {
         destroy .oboptions
         if {[info exists options_context] && [lindex $options_context 1] eq "drive"} {
             if {[lindex $options_context 0] eq "tpcc"} {loadtpcc} else {loadtpch}
+        } elseif {$previous_mode ne [dict get $updated connection ob_compatibility_mode] &&
+                [info exists ::_ED(packagekeyname)] &&
+                $::_ED(packagekeyname) in {{OceanBase MySQL tenant} {OceanBase Oracle tenant}}} {
+            ed_edit_clear
         }
     }
 

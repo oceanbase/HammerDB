@@ -13,6 +13,11 @@ namespace eval obmet {
     }
     unset -nocomplain name
     namespace export obmetrics ob_post_kill_dbmon_cleanup
-    interp alias {} ::obmet::obmetrics {} ::mysqlmet::mysqlmetrics
+    proc obmetrics {} {
+        if {[::oceanbase::backend $::configoceanbase] eq "::oceanbase::oracle"} {
+            return [::genmetrics]
+        }
+        return [::mysqlmet::mysqlmetrics]
+    }
     interp alias {} ::obmet::ob_post_kill_dbmon_cleanup {} ::oceanbaseash::stop
 }

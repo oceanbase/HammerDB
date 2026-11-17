@@ -108,6 +108,11 @@ proc find_current_dict {} {
         set dictname config$key
         if { [ dict get $dbdict $key name ] eq $rdbms } {
             upvar #0 config$key config$key
+            set tmpdictforpt [set $dictname]
+            if {$key eq "oceanbase"} {
+                set tmpdictforpt [oceanbase::active_config $tmpdictforpt]
+                dict unset tmpdictforpt connection ob_oracle_options
+            }
             set posswkl  [ split  [ dict get $dbdict $key workloads ]]
             set ind [lsearch $posswkl $bm]
             if { $ind != -1 } { set wkltoremove [lreplace $posswkl $ind $ind ]
@@ -116,7 +121,7 @@ proc find_current_dict {} {
                     return
                 } else {
                     set bmdct [ string tolower [ join [ split $wkltoremove - ] "" ]]
-                    set tmpdictforpt [ dict remove [ subst \$config$key ] $bmdct ]
+                    dict unset tmpdictforpt $bmdct
                 }
             }
             return $tmpdictforpt
@@ -637,10 +642,19 @@ proc diset { args } {
         set dct [ lindex $args 0 ]
         set key2 [ lindex $args 1 ]
         set val [ lindex $args 2 ]
+        set changing_ob_mode [expr {$rdbms eq "OceanBase" && $dct eq "connection" && $key2 eq "ob_compatibility_mode"}]
+        if {$changing_ob_mode} {
+            set val [string tolower $val]
+            if {$val ni [oceanbase::supported_modes]} {
+                putscli "Error: OceanBase tenant mode must be one of [join [oceanbase::supported_modes] {, }]"
+                return
+            }
+        } elseif {$rdbms eq "OceanBase" && [oceanbase::backend $::configoceanbase] eq "::oceanbase::oracle"} {
+            oceanbase::oracle::set_option $dct $key2 $val
+            return
+        }
         if { [ string match *pass* [ lindex $args 1 ]] } {
         set val [ quotemeta [ lindex $args 2 ]]
-                } else {
-        set val [ lindex $args 2 ]
         }
         upvar #0 dbdict dbdict
         foreach { key } [ dict keys $dbdict ] {
@@ -669,6 +683,7 @@ proc diset { args } {
                                 #Save new value to SQLite
                                 SQLiteUpdateKeyValue $key $dct $key2 $val
                                 remote_command [ concat diset $dct $key2 [ list \{$val\} ]]
+                                if {$changing_ob_mode} {clearscript}
                         }}
                     } else {
                         set key2find [ findakey $key2 $dictname ]
@@ -731,17 +746,18 @@ proc librarycheck {} {
     }
     foreach db $dbl library $libl {
         puts "Checking database library for $db"
-        if { [ llength $library ] > 1 } {
-            set version [ lindex $library 1 ]
-            set library [ lindex $library 0 ]
-            set cmd "package require $library $version"
-        } else {
-            set cmd "package require $library"
+        if {$db eq "OceanBase" && [info exists ::configoceanbase]} {
+            if {[catch {oceanbase::backend $::configoceanbase} backend]} {
+                puts "Error: $backend"
+                continue
+            }
+            if {$backend eq "::oceanbase::oracle"} {set library {oboracle 1.0}}
         }
-        if [catch {eval $cmd} message] {
-            puts "Error: failed to load $library - $message"
+        set name [lindex $library 0]
+        if {[catch {package require {*}$library} message]} {
+            puts "Error: failed to load $name - $message"
             if {$db eq "OceanBase"} {
-                puts "OceanBase requires the obmysqltcl binding and OceanBase Connector/C (libobclient); see DocBook/oceanbase.md."
+                puts "OceanBase requires the $name binding and OceanBase Connector/C (libobclient); see DocBook/oceanbase.md."
             }
             if {[string match windows $::tcl_platform(platform)]} {
                 puts "Ensure that $db client libraries are installed and the location in the PATH environment variable"
@@ -749,7 +765,7 @@ proc librarycheck {} {
                 puts "Ensure that $db client libraries are installed and the location in the LD_LIBRARY_PATH environment variable"
             }
         } else {
-            puts "Success ... loaded library $library for $db" 
+            puts "Success ... loaded library $name for $db"
         }
     }
 }
@@ -1240,15 +1256,17 @@ proc buildschema {} {
             set dictname config$key
             #set dbname $key
             upvar #0 $dictname $dictname
+            set build_config [set $dictname]
+            if {$key eq "oceanbase"} {set build_config [oceanbase::active_config $build_config]}
             break
         }
     }
     if { $bm eq "TPC-C" } {
-        set cwkey [ lsearch [ join [ set $dictname ]] *count_ware ]
-        set buildcw [ lindex [ join [ set $dictname ]] [ expr $cwkey + 1]]
-        set vukey [ lsearch [ join [ set $dictname ]] *num_vu ]
-        set vuname [ lsearch -inline [ join [ set $dictname ]] *num_vu ]
-        set buildvu [ lindex [ join [ set $dictname ]] [ expr $vukey + 1]]
+        set cwkey [ lsearch [ join $build_config] *count_ware ]
+        set buildcw [ lindex [ join $build_config] [ expr $cwkey + 1]]
+        set vukey [ lsearch [ join $build_config] *num_vu ]
+        set vuname [ lsearch -inline [ join $build_config] *num_vu ]
+        set buildvu [ lindex [ join $build_config] [ expr $vukey + 1]]
         if { ![string is integer -strict $buildvu ] || $buildvu < 1 } {
             puts "Error: Number of virtual users to build schema must be a positive integer"
             return
@@ -1279,11 +1297,11 @@ proc buildschema {} {
             }
         }
     } else {
-        set sfkey [ lsearch [ join [ set $dictname ]] *scale_fact ]
-        set buildsf [ lindex [ join [ set $dictname ]] [ expr $sfkey + 1]]
-        set vukey [ lsearch [ join [ set $dictname ]] *num_tpch_threads ]
-        set vuname [ lsearch -inline [ join [ set $dictname ]] *num_tpch_threads ]
-        set buildvu [ lindex [ join [ set $dictname ]] [ expr $vukey + 1]]
+        set sfkey [ lsearch [ join $build_config] *scale_fact ]
+        set buildsf [ lindex [ join $build_config] [ expr $sfkey + 1]]
+        set vukey [ lsearch [ join $build_config] *num_tpch_threads ]
+        set vuname [ lsearch -inline [ join $build_config] *num_tpch_threads ]
+        set buildvu [ lindex [ join $build_config] [ expr $vukey + 1]]
         if { ![string is integer -strict $buildvu ] || $buildvu < 1 } {
             puts "Error: Number of virtual users to build schema must be a positive integer"
             return
@@ -1338,8 +1356,10 @@ proc keepalive {} {
         upvar #0 $dictname $dictname
       }
     }
-    set rampup_secs [expr {[ get_base_rampup [ set $dictname ]]*60}]
-    set duration_secs [expr {[ get_base_duration [ set $dictname ]] *60}]
+    set timing_config [set $dictname]
+    if {$rdbms eq "OceanBase"} {set timing_config [oceanbase::active_config $timing_config]}
+    set rampup_secs [expr {[ get_base_rampup $timing_config]*60}]
+    set duration_secs [expr {[ get_base_duration $timing_config] *60}]
     foreach { val } [ list $rampup_secs $duration_secs ] {
       if { ![string is entier $val ] || ($val < 60 && $val != 0) } {
         set ka_valid 0
@@ -1739,9 +1759,11 @@ proc loadtpcc {} {
         if { [ dict get $dbdict $key name ] eq $rdbms } {
             set dictname config$key
             upvar #0 $dictname $dictname
+            set workload_config [set $dictname]
+            if {$key eq "oceanbase"} {set workload_config [oceanbase::active_config $workload_config]}
             set prefix [ dict get $dbdict $key prefix ]
             set drivername [ concat [subst {$prefix}]_driver ]
-            set drivertype [ dict get [ set $dictname ] tpcc $drivername ]
+            set drivertype [ dict get $workload_config tpcc $drivername ]
 	    if { $drivertype eq "test" } { set lprefix "load" } else { set lprefix "loadtimed" }
             if {[dict exists $genericdict commandline jobs_disable]} {
             if { [dict get $genericdict commandline jobs_disable] eq 0 } {
@@ -1775,12 +1797,12 @@ proc loadtpcc {} {
             }
             set command [ concat [subst {$lprefix$prefix}]tpcc ]
             eval $command
-            set allw [ lsearch -inline [ dict get [ set $dictname ] tpcc ] *allwarehouse ]
+            set allw [ lsearch -inline [ dict get $workload_config tpcc ] *allwarehouse ]
             if { $allw != "" } {
-                set db_allwarehouse [ dict get [ set $dictname ] tpcc $allw ]
-                set asyscl [ lsearch -inline [ dict get [ set $dictname ] tpcc ] *async_scale ]
+                set db_allwarehouse [ dict get $workload_config tpcc $allw ]
+                set asyscl [ lsearch -inline [ dict get $workload_config tpcc ] *async_scale ]
                 if { $asyscl != "" } {
-                    set db_async_scale [ dict get [ set $dictname ] tpcc $asyscl ]
+                    set db_async_scale [ dict get $workload_config tpcc $asyscl ]
                 } else {
                     set db_async_scale "false"
                 }
@@ -1792,9 +1814,9 @@ proc loadtpcc {} {
             }
 	    #force timeprofiler to xtprof keep option to choose alternative as placeholder after deprecating etprof
             if { $profiler eq "xtprof" } { set profile_func "xttimeprofile" }  else { set profile_func "xttimeprofile" }
-            set timep [ lsearch -inline [ dict get [ set $dictname ] tpcc ] *timeprofile ]
+            set timep [ lsearch -inline [ dict get $workload_config tpcc ] *timeprofile ]
             if { $timep != "" } {
-                set db_timeprofile [ dict get [ set $dictname ] tpcc $timep ]
+                set db_timeprofile [ dict get $workload_config tpcc $timep ]
                 if { $db_timeprofile } { shared_tpcc_functions $profile_func "false" }
             }
             break
@@ -1813,11 +1835,13 @@ proc loadtpch {} {
         if { [ dict get $dbdict $key name ] eq $rdbms } {
             set dictname config$key
             upvar #0 $dictname $dictname
+            set workload_config [set $dictname]
+            if {$key eq "oceanbase"} {set workload_config [oceanbase::active_config $workload_config]}
             set prefix [ dict get $dbdict $key prefix ]
             set command [ concat [subst {load$prefix}]tpch ]
-            set cloudq [ lsearch -inline [ dict get [ set $dictname ] tpch ] *cloud_query ]
+            set cloudq [ lsearch -inline [ dict get $workload_config tpch ] *cloud_query ]
             if { $cloudq != "" } {
-                set db_cloud_query [ dict get [ set $dictname ] tpch $cloudq ]
+                set db_cloud_query [ dict get $workload_config tpch $cloudq ]
                 if { $db_cloud_query } { set command [ concat [subst {load$prefix}]cloud ] }
             }
             eval $command

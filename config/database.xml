@@ -55,7 +55,7 @@
     <prefix>ob</prefix>
     <library>obmysqltcl</library>
     <workloads>TPROC-C TPROC-H</workloads>
-    <commands>obmysql::sel obmysqluse obmysqlexec obmysqlclose obmysql::commit obmysql::rollback</commands>
+    <commands>obmysql::sel obmysqluse obmysqlexec obmysqlclose obmysql::commit obmysql::rollback oboracle::connect oceanbaseoracledriver::oraopen oceanbaseoracledriver::oraparse oceanbaseoracledriver::orabind oceanbaseoracledriver::oraexec oceanbaseoracledriver::orafetch</commands>
 </oceanbase>
 <villagesql>
         <name>VillageSQL</name>

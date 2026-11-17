@@ -2,7 +2,7 @@
 # from a user-supplied Tcl command or file path.
 package require oceanbaseconfig
 namespace eval oceanbase {
-    variable backends [dict create mysql ::oceanbase::mysql]
+    variable backends [dict create mysql ::oceanbase::mysql oracle ::oceanbase::oracle]
     proc supported_modes {} {
         variable backends
         return [dict keys $backends]
@@ -23,6 +23,28 @@ namespace eval oceanbase {
         set implementation [backend $configuration]
         return [${implementation}::validate $configuration]
     }
+    proc active_config {configuration} {
+        if {[backend $configuration] ne "::oceanbase::oracle"} {return $configuration}
+        set native [::oceanbaseconfig::oracle_options $configuration]
+        foreach key {ob_host ob_port ob_tenant ob_cluster ob_query_timeout ob_ssl ob_ssl_two_way
+            ob_ssl_linux_capath ob_ssl_windows_capath ob_ssl_ca ob_ssl_cert ob_ssl_key ob_ssl_cipher} {
+            dict set configuration connection $key [dict get $native connection $key]
+        }
+        foreach {key native_key} {ob_driver ora_driver ob_count_ware count_ware ob_num_vu num_vu
+            ob_allwarehouse allwarehouse ob_timeprofile ora_timeprofile ob_async_scale async_scale
+            ob_rampup rampup ob_duration duration ob_total_iterations total_iterations
+            ob_user tpcc_user ob_pass tpcc_pass ob_raiseerror raiseerror ob_keyandthink keyandthink
+            ob_distributed_schema distributed_schema ob_partition_count partition_count ob_connect_pool connect_pool
+            ob_prepared prepared ob_no_stored_procs no_stored_procs ob_history_pk history_pk} {
+            dict set configuration tpcc $key [dict get $native tpcc $native_key]
+        }
+        foreach {key native_key} {ob_cloud_query cloud_query ob_scale_fact scale_fact
+            ob_num_tpch_threads num_tpch_threads ob_tpch_user tpch_user ob_tpch_pass tpch_pass
+            ob_tpch_optimized_schema distributed_schema ob_tpch_partition_count partition_count} {
+            dict set configuration tpch $key [dict get $native tpch $native_key]
+        }
+        return $configuration
+    }
     proc dispatch {operation args} {
         global configoceanbase
         if {$operation ni {generate counter options counter_options}} {error "Unknown OceanBase operation: $operation"}
@@ -31,6 +53,7 @@ namespace eval oceanbase {
     }
 }
 source [file join [file dirname [info script]] mysql adapter.tcl]
+source [file join [file dirname [info script]] oracle adapter.tcl]
 proc configobtpcc {option} {oceanbase::dispatch options tpcc $option}
 proc configobtpch {option} {oceanbase::dispatch options tpch $option}
 proc countobopts {bm} {oceanbase::dispatch counter_options $bm}
@@ -38,6 +61,9 @@ proc countobopts {bm} {oceanbase::dispatch counter_options $bm}
 # Reuse the existing host CPU agent controls. Database metrics use the selected
 # OceanBase workload's connection, including tenant routing and TLS settings.
 proc metobopts {} {
+    if {[info exists ::configoceanbase] && [::oceanbase::backend $::configoceanbase] eq "::oceanbase::oracle"} {
+        return [metgenopts]
+    }
     global cpu_only
     if {![info exists cpu_only]} {set cpu_only false}
     set ::oceanbase::metrics_cpu_only $cpu_only

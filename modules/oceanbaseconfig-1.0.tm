@@ -1,6 +1,44 @@
 # OceanBase defaults are applied after XML or SQLite loading. The shared XML
 # parser deliberately retains its existing handling of empty elements.
 namespace eval oceanbaseconfig {
+    proc oracle_options {configuration} {
+        # Keep Oracle options inside the OceanBase category, independently of
+        # both its MySQL options and the native Oracle category.
+        set defaults {
+            connection {instance {} system_user sys system_password {}
+                ob_ssl false ob_ssl_two_way false ob_ssl_linux_capath /etc/mysql/certs
+                ob_ssl_windows_capath C:\mysql\certs ob_ssl_ca ca-cert.pem ob_ssl_cert client-cert.pem
+                ob_ssl_key client-key.pem ob_ssl_cipher server}
+            tpcc {tpcc_user tpcc tpcc_pass {} tpcc_def_tab users tpcc_ol_tab users tpcc_def_temp temp
+                count_ware 1 num_vu 1 distributed_schema false partition_count 24 partition false hash_clusters false tpcc_tt_compat false
+                total_iterations 10000000 raiseerror true keyandthink false checkpoint false
+                ora_driver timed rampup 2 duration 5 allwarehouse false ora_timeprofile false
+                prepared false no_stored_procs false history_pk false
+                async_scale false async_client 10 async_verbose false async_delay 1000 connect_pool false}
+            tpch {tpch_user tpch tpch_pass {} tpch_def_tab users tpch_def_temp temp num_tpch_threads 1
+                tpch_tt_compat false distributed_schema false partition_count 24 scale_fact 1 total_querysets 1 raise_query_error true verbose false
+                degree_of_parallel 2 refresh_on false update_sets 1 trickle_refresh 1000
+                refresh_verbose false cloud_query false}
+        }
+        foreach {key value} {ob_host 127.0.0.1 ob_port 2881 ob_tenant {} ob_cluster {} ob_query_timeout 120} {
+            if {[dict exists $configuration connection $key]} {set value [dict get $configuration connection $key]}
+            dict set defaults connection $key $value
+        }
+        if {[dict exists $configuration connection ob_oracle_options]} {
+            dict for {group values} [dict get $configuration connection ob_oracle_options] {
+                if {$group ni {connection tpcc tpch}} {error "Unknown OceanBase Oracle options group: $group"}
+                if {$group eq "connection"} {
+                    # Former OCI-only settings have no libobclient equivalent.
+                    set values [dict remove $values obci_library instance]
+                } elseif {$group eq "tpcc"} {
+                    set values [dict remove $values text_call]
+                }
+                dict set defaults $group [dict merge [dict get $defaults $group] $values]
+            }
+        }
+        return $defaults
+    }
+
     proc merge_registry {saved defaults} {
         # Preserve saved categories, add new ones and migrate the old OB binding.
         set defaults [regsub -all {(TP)(RO)(C-[CH])} $defaults {\1\3}]
@@ -11,13 +49,30 @@ namespace eval oceanbaseconfig {
             }
         }
         set binding_update {}
-        if {[dict exists $saved oceanbase library] &&
-            [dict get $saved oceanbase library] eq "mysqltcl" &&
-            [dict exists $defaults oceanbase library] &&
+        if {[dict exists $saved oceanbase library] && [dict exists $defaults oceanbase library] &&
             [dict get $defaults oceanbase library] eq "obmysqltcl"} {
-            foreach key {library commands} {
-                if {[dict exists $defaults oceanbase $key]} {
-                    dict set binding_update $key [dict get $defaults oceanbase $key]
+            switch -- [dict get $saved oceanbase library] {
+                mysqltcl {
+                    foreach key {library commands} {
+                        if {[dict exists $defaults oceanbase $key]} {
+                            dict set binding_update $key [dict get $defaults oceanbase $key]
+                        }
+                    }
+                }
+                obmysqltcl {
+                    # Existing profiles already use the MySQL binding but may
+                    # predate the Oracle commands used by the editor.
+                    if {[dict exists $defaults oceanbase commands]} {
+                        set commands {}
+                        if {[dict exists $saved oceanbase commands]} {
+                            set commands [dict get $saved oceanbase commands]
+                        }
+                        set updated $commands
+                        foreach command [dict get $defaults oceanbase commands] {
+                            if {$command ni $updated} {lappend updated $command}
+                        }
+                        if {$updated ne $commands} {dict set binding_update commands $updated}
+                    }
                 }
             }
         }
@@ -130,7 +185,7 @@ namespace eval oceanbaseconfig {
         } {
             if {[dict exists $configuration $group $key]} {dict unset configuration $group $key}
         }
-        set defaults {connection {ob_compatibility_mode mysql ob_cluster {}}}
+        set defaults {connection {ob_compatibility_mode mysql ob_cluster {} ob_oracle_options {}}}
         set mode mysql
         if {[dict exists $configuration connection ob_compatibility_mode]} {
             set mode [string tolower [dict get $configuration connection ob_compatibility_mode]]
