@@ -154,6 +154,9 @@ test options-oracle-save {Oracle settings persist separately and reopen through 
     select_ob_mode oracle
     set ::oceanbase::mysql::options(oracle_tpcc,tpcc_user) oracle_saved
     set ::oceanbase::mysql::options(oracle_connection,ob_ssl) true
+    foreach key {ob_ssl_ca ob_ssl_linux_capath ob_ssl_windows_capath} {
+        set ::oceanbase::mysql::options(oracle_connection,$key) {}
+    }
     .oboptions.buttons.ok invoke
     configobtpcc all
     sqlite3 settings [CheckSQLiteDB oceanbase]
